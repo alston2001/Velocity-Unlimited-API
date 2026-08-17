@@ -255,10 +255,10 @@ function MetricTile({
 // ---------------------------------------------------------------------------
 
 function zoneColor(zone: string, colors: ReturnType<typeof useColors>): string {
-  if (zone.includes('Power'))    return '#22C55E';
-  if (zone.includes('Speed-Strength')) return '#84CC16';
-  if (zone.includes('Strength-Speed')) return '#F59E0B';
-  if (zone.includes('Maximal'))  return colors.primary;
+  if (zone.includes('Power'))          return '#FFD600'; // yellow — explosive
+  if (zone.includes('Speed-Strength')) return colors.primary; // blue — fast-loaded
+  if (zone.includes('Strength-Speed')) return colors.destructive; // red — heavy-fast
+  if (zone.includes('Maximal'))        return colors.destructive; // red — maximal
   return colors.mutedForeground;
 }
 
@@ -280,7 +280,7 @@ function RepVelocityBars({
         {repPeaks.map((v, i) => {
           const pct = v / maxV;
           const dropPct = i > 0 ? ((firstPeak - v) / firstPeak) * 100 : 0;
-          const barColor = dropPct > 20 ? '#EF4444' : dropPct > 10 ? '#F59E0B' : '#22C55E';
+          const barColor = dropPct > 20 ? colors.destructive : dropPct > 10 ? colors.primary : '#FFD600';
           return (
             <View key={i} style={styles.repBarCol}>
               <Text style={[styles.repBarValue, { color: barColor }]}>
@@ -305,7 +305,7 @@ function RepVelocityBars({
         })}
       </View>
       <Text style={[styles.helperText, { color: colors.mutedForeground }]}>
-        m/s peak per rep · green &gt;10% above threshold · red &gt;20% velocity loss
+        m/s peak per rep · yellow = strong · blue = slight drop · red &gt;20% velocity loss
       </Text>
     </View>
   );
@@ -333,10 +333,10 @@ function RestTimer({
   const mins = Math.floor(secsLeft / 60);
   const secs = secsLeft % 60;
   const label = done ? 'REST COMPLETE' : 'REST TIMER';
-  const timerColor = done ? '#22C55E' : secsLeft < 15 ? colors.primary : colors.foreground;
+  const timerColor = done ? '#FFD600' : secsLeft < 15 ? colors.destructive : colors.foreground;
 
   return (
-    <View style={[styles.restCard, { backgroundColor: colors.card, borderColor: done ? '#22C55E55' : colors.border }]}>
+    <View style={[styles.restCard, { backgroundColor: colors.card, borderColor: done ? '#FFD60055' : colors.border }]}>
       <View style={styles.restHeader}>
         <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>{label}</Text>
         <Pressable onPress={onSkip} hitSlop={12}>
@@ -346,7 +346,7 @@ function RestTimer({
 
       {/* Progress bar */}
       <View style={[styles.restTrack, { backgroundColor: colors.muted }]}>
-        <View style={[styles.restFill, { width: `${pct * 100}%` as `${number}%`, backgroundColor: done ? '#22C55E' : colors.primary }]} />
+        <View style={[styles.restFill, { width: `${pct * 100}%` as `${number}%`, backgroundColor: done ? '#FFD600' : colors.primary }]} />
       </View>
 
       {/* Time display */}
@@ -433,10 +433,10 @@ type VelocityTrend = 'Rising' | 'Stable' | 'Declining' | 'Insufficient data' | n
 
 function readinessColor(level: ReadinessLevel, colors: ReturnType<typeof useColors>): string {
   if (!level || level === 'Insufficient data') return colors.mutedForeground;
-  if (level === 'High')       return '#22C55E';  // green-500
-  if (level === 'Moderate')   return '#F59E0B';  // amber-500
-  if (level === 'Low')        return '#F97316';  // orange-500
-  return '#EF4444';                               // red-500 — Compromised
+  if (level === 'High')       return colors.primary;     // blue — ready to fire
+  if (level === 'Moderate')   return '#FFD600';          // yellow — proceed with awareness
+  if (level === 'Low')        return colors.destructive; // red — caution
+  return colors.destructive;                             // red — Compromised
 }
 
 function trendArrow(trend: VelocityTrend): string {
@@ -447,9 +447,9 @@ function trendArrow(trend: VelocityTrend): string {
 }
 
 function trendColor(trend: VelocityTrend, colors: ReturnType<typeof useColors>): string {
-  if (trend === 'Rising')    return '#22C55E';
-  if (trend === 'Declining') return '#EF4444';
-  if (trend === 'Stable')    return colors.mutedForeground;
+  if (trend === 'Rising')    return colors.primary;
+  if (trend === 'Declining') return colors.destructive;
+  if (trend === 'Stable')    return '#FFD600';
   return colors.mutedForeground;
 }
 
@@ -1017,9 +1017,9 @@ export default function MotionTrackerScreen() {
               </View>
 
               <View style={styles.axisGrid}>
-                <AxisCard axis="X" value={live.x} color={colors.primary} colors={colors} highlight={isRecording} />
-                <AxisCard axis="Y" value={live.y} color={colors.accent} colors={colors} highlight={isRecording} />
-                <AxisCard axis="Z" value={live.z} color="#6E8BFF" colors={colors} highlight={isRecording} />
+                <AxisCard axis="X" value={live.x} color={colors.destructive} colors={colors} highlight={isRecording} />
+                <AxisCard axis="Y" value={live.y} color="#FFD600" colors={colors} highlight={isRecording} />
+                <AxisCard axis="Z" value={live.z} color={colors.primary} colors={colors} highlight={isRecording} />
               </View>
 
               <Text style={[styles.helperText, { color: colors.mutedForeground }]}>
@@ -1170,8 +1170,8 @@ export default function MotionTrackerScreen() {
                 <>
                   {/* Motion gate — no movement detected */}
                   {feedbackData.velocity_zone === 'No movement' ? (
-                    <View style={[styles.feedbackCard, { backgroundColor: '#F59E0B15', borderColor: '#F59E0B55' }]}>
-                      <Text style={[styles.sectionLabel, { color: '#D97706' }]}>NO MOVEMENT DETECTED</Text>
+                    <View style={[styles.feedbackCard, { backgroundColor: '#FFD60018', borderColor: '#FFD60055' }]}>
+                      <Text style={[styles.sectionLabel, { color: '#B89800' }]}>NO MOVEMENT DETECTED</Text>
                       <Text style={[styles.feedbackText, { color: colors.foreground }]}>
                         The phone didn't detect meaningful bar movement. Make sure it's secured to the bar or weight stack before recording.
                       </Text>
@@ -1179,10 +1179,16 @@ export default function MotionTrackerScreen() {
                   ) : (
                   <>
                   {/* Velocity zone banner */}
-                  <View style={[styles.zoneBanner, { backgroundColor: colors.primary + '18', borderColor: colors.primary + '55' }]}>
-                    <Text style={[styles.zoneLabel, { color: colors.mutedForeground }]}>VELOCITY ZONE · SET {setNumber}</Text>
-                    <Text style={[styles.zoneValue, { color: colors.primary }]}>{feedbackData.velocity_zone}</Text>
-                  </View>
+                  {(() => {
+                    const zc = zoneColor(feedbackData.velocity_zone, colors);
+                    const zcFg = zc === '#FFD600' ? '#7A6400' : zc;
+                    return (
+                      <View style={[styles.zoneBanner, { backgroundColor: zc + '18', borderColor: zc + '66' }]}>
+                        <Text style={[styles.zoneLabel, { color: colors.mutedForeground }]}>VELOCITY ZONE · SET {setNumber}</Text>
+                        <Text style={[styles.zoneValue, { color: zcFg }]}>{feedbackData.velocity_zone}</Text>
+                      </View>
+                    );
+                  })()}
 
                   {/* Primary metrics row */}
                   <View style={styles.metricsRow}>
@@ -1234,22 +1240,22 @@ export default function MotionTrackerScreen() {
                       styles.fatiguePill,
                       {
                         backgroundColor:
-                          feedbackData.fatigue_level.startsWith('Fresh') ? colors.primary + '20'
-                          : feedbackData.fatigue_level.startsWith('Moderate') ? '#F59E0B20'
-                          : '#EF444420',
+                          feedbackData.fatigue_level.startsWith('Fresh') ? '#FFD60020'
+                          : feedbackData.fatigue_level.startsWith('Moderate') ? colors.primary + '20'
+                          : colors.destructive + '20',
                         borderColor:
-                          feedbackData.fatigue_level.startsWith('Fresh') ? colors.primary + '60'
-                          : feedbackData.fatigue_level.startsWith('Moderate') ? '#F59E0B60'
-                          : '#EF444460',
+                          feedbackData.fatigue_level.startsWith('Fresh') ? '#FFD60060'
+                          : feedbackData.fatigue_level.startsWith('Moderate') ? colors.primary + '60'
+                          : colors.destructive + '60',
                       },
                     ]}>
                       <Text style={[
                         styles.fatiguePillText,
                         {
                           color:
-                            feedbackData.fatigue_level.startsWith('Fresh') ? colors.primary
-                            : feedbackData.fatigue_level.startsWith('Moderate') ? '#D97706'
-                            : '#DC2626',
+                            feedbackData.fatigue_level.startsWith('Fresh') ? '#7A6400'
+                            : feedbackData.fatigue_level.startsWith('Moderate') ? colors.primary
+                            : colors.destructive,
                         },
                       ]}>
                         {feedbackData.fatigue_level}

@@ -1,57 +1,52 @@
 /**
- * Semantic design tokens for the mobile app.
+ * Bauhaus primary palette — red, yellow, blue on white.
  *
- * These tokens mirror the naming conventions used in web artifacts (index.css)
- * so that multi-artifact projects share a cohesive visual identity.
- *
- * Replace the placeholder values below with values that match the project's
- * brand. If a sibling web artifact exists, read its index.css and convert the
- * HSL values to hex so both artifacts use the same palette.
- *
- * To add dark mode, add a `dark` key with the same token names.
- * The useColors() hook will automatically pick it up.
+ * Blue  (#1A5FFF / #4D80FF dark) — primary actions, speed zones, active state
+ * Yellow (#FFD600)               — power zones, success/rest-complete, highlights
+ * Red   (#E8001D / #FF2D3B dark) — recording, maximal strength, errors, fatigued reps
+ * White (#FFFFFF)                — background canvas
  */
 
 const colors = {
   light: {
-    text: '#0B1220',
-    tint: '#0FA6A0',
-    background: '#F4F8FA',
-    foreground: '#0B1220',
+    text: '#0A0A0A',
+    tint: '#1A5FFF',
+    background: '#FFFFFF',
+    foreground: '#0A0A0A',
     card: '#FFFFFF',
-    cardForeground: '#0B1220',
-    primary: '#0FA6A0',
+    cardForeground: '#0A0A0A',
+    primary: '#1A5FFF',
     primaryForeground: '#FFFFFF',
-    secondary: '#E3F2F1',
-    secondaryForeground: '#0B5C5A',
-    muted: '#EAF0F3',
-    mutedForeground: '#6B7B88',
-    accent: '#FF765D',
-    accentForeground: '#FFFFFF',
-    destructive: '#D84C4C',
+    secondary: '#F0F4FF',
+    secondaryForeground: '#1A3A8A',
+    muted: '#F5F5F5',
+    mutedForeground: '#767676',
+    accent: '#FFD600',
+    accentForeground: '#0A0A0A',
+    destructive: '#E8001D',
     destructiveForeground: '#FFFFFF',
-    border: '#D9E4E9',
-    input: '#D9E4E9',
+    border: '#E5E5E5',
+    input: '#E5E5E5',
   },
   dark: {
-    text: '#F4F8FA',
-    tint: '#42D4C8',
-    background: '#07151F',
-    foreground: '#F4F8FA',
-    card: '#102733',
-    cardForeground: '#F4F8FA',
-    primary: '#42D4C8',
-    primaryForeground: '#07151F',
-    secondary: '#173C43',
-    secondaryForeground: '#B5F6EF',
-    muted: '#18313E',
-    mutedForeground: '#91A7B3',
-    accent: '#FF8069',
-    accentForeground: '#07151F',
-    destructive: '#FF7B7B',
-    destructiveForeground: '#07151F',
-    border: '#244451',
-    input: '#244451',
+    text: '#FFFFFF',
+    tint: '#4D80FF',
+    background: '#0A0A10',
+    foreground: '#FFFFFF',
+    card: '#141420',
+    cardForeground: '#FFFFFF',
+    primary: '#4D80FF',
+    primaryForeground: '#FFFFFF',
+    secondary: '#1A1A2C',
+    secondaryForeground: '#4D80FF',
+    muted: '#1E1E2E',
+    mutedForeground: '#8888A0',
+    accent: '#FFD600',
+    accentForeground: '#0A0A10',
+    destructive: '#FF2D3B',
+    destructiveForeground: '#FFFFFF',
+    border: '#2A2A3E',
+    input: '#2A2A3E',
   },
   radius: 8,
 };
