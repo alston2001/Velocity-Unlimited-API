@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { AnalyzeSetBody } from "@workspace/api-zod";
 import { openai } from "@workspace/integrations-openai-ai-server";
+import { db, setsTable } from "@workspace/db";
 import {
   getProfile,
   estimateOneRmPct,
@@ -12,6 +13,10 @@ import {
   fetchAthleteSessions,
   isSparkdenConfigured,
 } from "../sparkden-client.js";
+import {
+  computeReadiness,
+  buildHistorySummary,
+} from "../cns-readiness.js";
 
 const router: IRouter = Router();
 
@@ -63,6 +68,7 @@ interface CoachingContext {
   totalSets: number;
   meanVelocityMs: number;
   peakVelocityMs: number;
+  firstRepPeakMs: number | null;
   estimated1RmPct: number;
   velocityZone: string;
   velocityLossPct: number | null;
@@ -70,6 +76,11 @@ interface CoachingContext {
   mvt: number;
   durationS: number;
   historySummary: string | null;
+  cnsReadinessScore: number | null;
+  motorReadinessLevel: string;
+  velocityTrend: string;
+  baselineVelocityMs: number | null;
+  readinessDataPoints: number;
 }
 
 async function generateCoachingFeedback(ctx: CoachingContext): Promise<string> {
@@ -82,9 +93,26 @@ async function generateCoachingFeedback(ctx: CoachingContext): Promise<string> {
       ? `Velocity loss across reps: ${ctx.velocityLossPct.toFixed(1)}% (${ctx.fatigueLevel})`
       : "Velocity loss: insufficient reps to calculate";
 
-  const systemPrompt = `You are a concise, data-driven velocity-based training (VBT) coach. 
+  const firstRepLine =
+    ctx.firstRepPeakMs !== null
+      ? `First-rep peak velocity: ${ctx.firstRepPeakMs.toFixed(3)} m/s`
+      : "First-rep peak: not detected";
+
+  const readinessSection =
+    ctx.cnsReadinessScore !== null
+      ? `
+CNS Motor Readiness (vs. 21-day load-matched baseline):
+- Readiness score: ${ctx.cnsReadinessScore}/100 (${ctx.motorReadinessLevel})
+- Baseline first-rep peak: ${ctx.baselineVelocityMs?.toFixed(3) ?? "n/a"} m/s
+- Session-to-session trend: ${ctx.velocityTrend} (based on ${ctx.readinessDataPoints} historical sessions)`
+      : ctx.readinessDataPoints > 0
+      ? `\nCNS Readiness: building baseline (${ctx.readinessDataPoints}/3 sessions tracked at this load)`
+      : "\nCNS Readiness: no prior history at this load — today starts the baseline.";
+
+  const systemPrompt = `You are a concise, data-driven velocity-based training (VBT) coach.
 You communicate exactly like elite strength coaches who use tools like GymAware or PUSH Band in the real world.
 Your feedback is direct, specific, and references actual velocity numbers.
+When CNS readiness data is available, integrate it into your assessment — distinguish between within-session fatigue (velocity loss across reps) and between-session fatigue (CNS readiness vs. baseline).
 Never use generic motivational language. Always ground feedback in the data provided.
 Keep responses to 2–4 sentences maximum.`;
 
@@ -97,14 +125,16 @@ Set duration: ${ctx.durationS.toFixed(1)} s
 
 Velocity metrics:
 - Mean velocity: ${ctx.meanVelocityMs.toFixed(3)} m/s
-- Peak velocity: ${ctx.peakVelocityMs.toFixed(3)} m/s  
+- Peak velocity: ${ctx.peakVelocityMs.toFixed(3)} m/s
+- ${firstRepLine}
 - Training zone: ${ctx.velocityZone}
 - Estimated %1RM: ~${ctx.estimated1RmPct}%
 - Minimum velocity threshold (1RM) for this lift: ${ctx.mvt.toFixed(2)} m/s
 - ${velocityLossLine}
+${readinessSection}
 ${historySection}
 
-Provide specific, actionable coaching feedback for the next set. Reference the velocity numbers directly.`;
+Provide specific, actionable coaching feedback for the next set. Reference the velocity numbers directly. If readiness is Low or Compromised, factor that into load/intensity recommendations.`;
 
   const response = await openai.chat.completions.create({
     model: "gpt-5.6-luna",
@@ -158,15 +188,24 @@ router.post("/analyze-set", async (req, res) => {
   const velocityZone = getVelocityZone(mean);
 
   const repPeaks = extractRepPeaks(velocities);
+  const firstRepPeakMs = repPeaks.length > 0 ? (repPeaks[0] ?? null) : null;
   const lossResult = calcVelocityLoss(repPeaks);
   const velocityLossPct = lossResult?.lossPercent ?? null;
   const fatigueLevel = lossResult?.fatigue ?? null;
+  const actualReps = repPeaks.length;
 
-  // 3. Sparkden athlete history (graceful degradation)
-  let historySummary: string | null = null;
+  // 3. CNS motor readiness — query against prior persisted sets
+  const readinessResult = await computeReadiness(
+    exercise_name,
+    weight_kg,
+    firstRepPeakMs,
+  );
+
+  // 4. Build history summary from DB records (primary) or Sparkden (fallback)
+  let historySummary: string | null = buildHistorySummary(readinessResult.history);
   let sparkdenHistoryUsed = false;
 
-  if (isSparkdenConfigured()) {
+  if (!historySummary && isSparkdenConfigured()) {
     try {
       const sessions = await fetchAthleteSessions(exercise_name, 5);
       if (sessions.length > 0) {
@@ -183,7 +222,7 @@ router.post("/analyze-set", async (req, res) => {
     }
   }
 
-  // 4. AI coaching text
+  // 5. AI coaching text (includes CNS readiness context)
   const aiFeedback = await generateCoachingFeedback({
     exerciseName: exercise_name,
     weightKg: weight_kg,
@@ -191,6 +230,7 @@ router.post("/analyze-set", async (req, res) => {
     totalSets: total_sets,
     meanVelocityMs: mean,
     peakVelocityMs: peak,
+    firstRepPeakMs,
     estimated1RmPct,
     velocityZone,
     velocityLossPct,
@@ -198,13 +238,41 @@ router.post("/analyze-set", async (req, res) => {
     mvt: profile.mvt,
     durationS,
     historySummary,
+    cnsReadinessScore: readinessResult.score,
+    motorReadinessLevel: readinessResult.level,
+    velocityTrend: readinessResult.trend,
+    baselineVelocityMs: readinessResult.baselineVelocityMs,
+    readinessDataPoints: readinessResult.dataPoints,
   });
+
+  // 6. Persist this set for future readiness calculations
+  try {
+    await db.insert(setsTable).values({
+      exerciseName: exercise_name,
+      weightKg: weight_kg,
+      targetReps: target_reps,
+      actualReps,
+      meanVelocityMs: Math.round(mean * 1000) / 1000,
+      peakVelocityMs: Math.round(peak * 1000) / 1000,
+      firstRepPeakMs: firstRepPeakMs !== null ? Math.round(firstRepPeakMs * 1000) / 1000 : null,
+      estimated1RmPct,
+      velocityZone,
+      velocityLossPct,
+      fatigueLevel,
+      durationS: Math.round(durationS * 10) / 10,
+      sampleCount: samples.length,
+    });
+  } catch (err) {
+    // Persistence failure must not block the response — log and continue
+    console.error("[sets] Failed to persist set:", err);
+  }
 
   res.json({
     status: "success",
     exercise_name,
     mean_velocity_ms: Math.round(mean * 1000) / 1000,
     peak_velocity_ms: Math.round(peak * 1000) / 1000,
+    first_rep_peak_ms: firstRepPeakMs !== null ? Math.round(firstRepPeakMs * 1000) / 1000 : null,
     estimated_1rm_pct: estimated1RmPct,
     velocity_zone: velocityZone,
     velocity_loss_pct: velocityLossPct,
@@ -213,6 +281,11 @@ router.post("/analyze-set", async (req, res) => {
     duration_s: Math.round(durationS * 10) / 10,
     ai_feedback: aiFeedback,
     sparkden_history_used: sparkdenHistoryUsed,
+    cns_readiness_score: readinessResult.score,
+    motor_readiness_level: readinessResult.level,
+    velocity_trend: readinessResult.trend,
+    readiness_data_points: readinessResult.dataPoints,
+    baseline_velocity_ms: readinessResult.baselineVelocityMs,
   });
 });
 

@@ -31,7 +31,7 @@ paths:
       operationId: analyzeSet
       tags: [coaching]
       summary: Analyze a set
-      description: Accepts a raw acceleration batch and returns velocity-integrated coaching feedback enriched with VBT profiles and AI coaching text
+      description: Accepts a raw acceleration batch and returns velocity-integrated coaching feedback enriched with VBT profiles, CNS readiness score, and AI coaching text
       requestBody:
         required: true
         content:
@@ -40,7 +40,7 @@ paths:
               $ref: "#/components/schemas/SetAnalysisRequest"
       responses:
         "200":
-          description: Coaching feedback with velocity metrics
+          description: Coaching feedback with velocity metrics and CNS readiness data
           content:
             application/json:
               schema:
@@ -129,6 +129,10 @@ components:
         peak_velocity_ms:
           type: number
           description: Peak bar velocity in m/s
+        first_rep_peak_ms:
+          type: number
+          description: "First-rep peak velocity in m/s — primary CNS readiness marker. Null when fewer than 1 rep detected."
+          nullable: true
         estimated_1rm_pct:
           type: integer
           description: Estimated percentage of 1RM based on exercise-specific load-velocity profile
@@ -155,11 +159,31 @@ components:
         sparkden_history_used:
           type: boolean
           description: Whether historical Sparkden session data was incorporated in the feedback
+        cns_readiness_score:
+          type: integer
+          description: "Motor readiness score 0–100 based on first-rep peak vs. 21-day load-matched baseline. Null when fewer than 3 historical sets exist at this load."
+          nullable: true
+        motor_readiness_level:
+          type: string
+          description: "Qualitative readiness classification: High / Moderate / Low / Compromised / Insufficient data"
+          nullable: true
+        velocity_trend:
+          type: string
+          description: "Session-to-session velocity trend: Rising / Stable / Declining / Insufficient data"
+          nullable: true
+        readiness_data_points:
+          type: integer
+          description: Number of historical load-matched sessions used to compute readiness
+        baseline_velocity_ms:
+          type: number
+          description: "The 21-day load-matched mean first-rep peak used as the readiness baseline. Null when insufficient data."
+          nullable: true
       required:
         - status
         - exercise_name
         - mean_velocity_ms
         - peak_velocity_ms
+        - first_rep_peak_ms
         - estimated_1rm_pct
         - velocity_zone
         - velocity_loss_pct
@@ -168,3 +192,8 @@ components:
         - duration_s
         - ai_feedback
         - sparkden_history_used
+        - cns_readiness_score
+        - motor_readiness_level
+        - velocity_trend
+        - readiness_data_points
+        - baseline_velocity_ms

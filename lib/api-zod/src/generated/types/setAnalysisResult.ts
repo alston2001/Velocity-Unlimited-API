@@ -14,6 +14,8 @@ export interface SetAnalysisResult {
   mean_velocity_ms: number;
   /** Peak bar velocity in m/s */
   peak_velocity_ms: number;
+  /** First-rep peak velocity in m/s — primary CNS readiness marker. Null when fewer than 1 rep detected. */
+  first_rep_peak_ms: number | null;
   /** Estimated percentage of 1RM based on exercise-specific load-velocity profile */
   estimated_1rm_pct: number;
   /** VBT training zone: Maximal Strength / Strength-Speed / Speed-Strength / Power / Starting */
@@ -30,4 +32,14 @@ export interface SetAnalysisResult {
   ai_feedback: string;
   /** Whether historical Sparkden session data was incorporated in the feedback */
   sparkden_history_used: boolean;
+  /** Motor readiness score 0–100 based on first-rep peak vs. 21-day load-matched baseline. Null when fewer than 3 historical sets exist at this load. */
+  cns_readiness_score: number | null;
+  /** Qualitative readiness classification: High / Moderate / Low / Compromised / Insufficient data */
+  motor_readiness_level: string | null;
+  /** Session-to-session velocity trend: Rising / Stable / Declining / Insufficient data */
+  velocity_trend: string | null;
+  /** Number of historical load-matched sessions used to compute readiness */
+  readiness_data_points: number;
+  /** The 21-day load-matched mean first-rep peak used as the readiness baseline. Null when insufficient data. */
+  baseline_velocity_ms: number | null;
 }

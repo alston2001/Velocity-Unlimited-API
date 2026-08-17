@@ -1,3 +1,4 @@
 - [Zod v3 orval codegen patch](zod-orval-patch.md) — orval generates `zod.int()` (v4 syntax); must sed-patch to `zod.number().int()` after every codegen run, before building lib packages.
 - [VBT profiles + OpenAI coaching architecture](vbt-coaching-arch.md) — exercise-specific load-velocity profiles in vbt-profiles.ts; Sparkden OAuth2 client in sparkden-client.ts; coaching route is async and calls OpenAI gpt-5.6-luna for text.
 - [Lib build order](lib-build-order.md) — after codegen, build in order: api-zod → api-client-react → integrations-openai-ai-server (independent), then typecheck consumers.
+- [CNS readiness architecture](cns-readiness-arch.md) — first-rep peak vs 21-day load-matched baseline; sets persisted to DB; ReadinessCard in mobile feedback phase.

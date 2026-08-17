@@ -16,7 +16,7 @@ export const ApiHomeResponse = zod.string()
 
 
 /**
- * Accepts a raw acceleration batch and returns velocity-integrated coaching feedback enriched with VBT profiles and AI coaching text
+ * Accepts a raw acceleration batch and returns velocity-integrated coaching feedback enriched with VBT profiles, CNS readiness score, and AI coaching text
  * @summary Analyze a set
  */
 export const AnalyzeSetBody = zod.object({
@@ -37,6 +37,7 @@ export const AnalyzeSetResponse = zod.object({
   "exercise_name": zod.string(),
   "mean_velocity_ms": zod.number().describe('Mean bar velocity in m\/s integrated from the acceleration batch'),
   "peak_velocity_ms": zod.number().describe('Peak bar velocity in m\/s'),
+  "first_rep_peak_ms": zod.number().nullable().describe('First-rep peak velocity in m\/s — primary CNS readiness marker. Null when fewer than 1 rep detected.'),
   "estimated_1rm_pct": zod.number().int().describe('Estimated percentage of 1RM based on exercise-specific load-velocity profile'),
   "velocity_zone": zod.string().describe('VBT training zone: Maximal Strength \/ Strength-Speed \/ Speed-Strength \/ Power \/ Starting'),
   "velocity_loss_pct": zod.number().nullable().describe('Velocity loss from first to last rep (%). Null when fewer than 2 reps detected.'),
@@ -44,7 +45,12 @@ export const AnalyzeSetResponse = zod.object({
   "sample_count": zod.number().int().describe('Number of samples processed'),
   "duration_s": zod.number().describe('Total set duration in seconds'),
   "ai_feedback": zod.string().describe('AI-generated coaching feedback grounded in VBT standards'),
-  "sparkden_history_used": zod.boolean().describe('Whether historical Sparkden session data was incorporated in the feedback')
+  "sparkden_history_used": zod.boolean().describe('Whether historical Sparkden session data was incorporated in the feedback'),
+  "cns_readiness_score": zod.number().int().nullable().describe('Motor readiness score 0–100 based on first-rep peak vs. 21-day load-matched baseline. Null when fewer than 3 historical sets exist at this load.'),
+  "motor_readiness_level": zod.string().nullable().describe('Qualitative readiness classification: High \/ Moderate \/ Low \/ Compromised \/ Insufficient data'),
+  "velocity_trend": zod.string().nullable().describe('Session-to-session velocity trend: Rising \/ Stable \/ Declining \/ Insufficient data'),
+  "readiness_data_points": zod.number().int().describe('Number of historical load-matched sessions used to compute readiness'),
+  "baseline_velocity_ms": zod.number().nullable().describe('The 21-day load-matched mean first-rep peak used as the readiness baseline. Null when insufficient data.')
 })
 
 

@@ -139,7 +139,7 @@ export const getAnalyzeSetUrl = () => {
 }
 
 /**
- * Accepts a raw acceleration batch and returns velocity-integrated coaching feedback enriched with VBT profiles and AI coaching text
+ * Accepts a raw acceleration batch and returns velocity-integrated coaching feedback enriched with VBT profiles, CNS readiness score, and AI coaching text
  * @summary Analyze a set
  */
 export const analyzeSet = async (setAnalysisRequest: SetAnalysisRequest, options?: Parameters<typeof customFetch>[1]): Promise<SetAnalysisResult> => {

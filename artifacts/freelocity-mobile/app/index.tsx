@@ -158,6 +158,144 @@ function MetricTile({
 }
 
 // ---------------------------------------------------------------------------
+// CNS Motor Readiness card
+// ---------------------------------------------------------------------------
+
+type ReadinessLevel = 'High' | 'Moderate' | 'Low' | 'Compromised' | 'Insufficient data' | null | undefined;
+type VelocityTrend = 'Rising' | 'Stable' | 'Declining' | 'Insufficient data' | null | undefined;
+
+function readinessColor(level: ReadinessLevel, colors: ReturnType<typeof useColors>): string {
+  if (!level || level === 'Insufficient data') return colors.mutedForeground;
+  if (level === 'High')       return '#22C55E';  // green-500
+  if (level === 'Moderate')   return '#F59E0B';  // amber-500
+  if (level === 'Low')        return '#F97316';  // orange-500
+  return '#EF4444';                               // red-500 — Compromised
+}
+
+function trendArrow(trend: VelocityTrend): string {
+  if (trend === 'Rising')   return '↑ Rising';
+  if (trend === 'Declining') return '↓ Declining';
+  if (trend === 'Stable')   return '→ Stable';
+  return '— Unknown';
+}
+
+function trendColor(trend: VelocityTrend, colors: ReturnType<typeof useColors>): string {
+  if (trend === 'Rising')    return '#22C55E';
+  if (trend === 'Declining') return '#EF4444';
+  if (trend === 'Stable')    return colors.mutedForeground;
+  return colors.mutedForeground;
+}
+
+function ReadinessCard({
+  score,
+  level,
+  trend,
+  dataPoints,
+  baselineVelocityMs,
+  firstRepPeakMs,
+  colors,
+}: {
+  score: number | null | undefined;
+  level: ReadinessLevel;
+  trend: VelocityTrend;
+  dataPoints: number | undefined;
+  baselineVelocityMs: number | null | undefined;
+  firstRepPeakMs: number | null | undefined;
+  colors: ReturnType<typeof useColors>;
+}) {
+  const pts = dataPoints ?? 0;
+  const rColor = readinessColor(level, colors);
+  const hasScore = score !== null && score !== undefined && level !== 'Insufficient data';
+
+  return (
+    <View style={[styles.readinessCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      {/* Header */}
+      <View style={styles.readinessHeader}>
+        <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>
+          CNS MOTOR READINESS
+        </Text>
+        {trend && trend !== 'Insufficient data' && (
+          <Text style={[styles.trendBadge, { color: trendColor(trend, colors) }]}>
+            {trendArrow(trend)}
+          </Text>
+        )}
+      </View>
+
+      {hasScore ? (
+        <>
+          {/* Score row */}
+          <View style={styles.readinessScoreRow}>
+            <Text style={[styles.readinessScore, { color: rColor }]}>
+              {score}
+            </Text>
+            <View style={styles.readinessScoreSuffix}>
+              <Text style={[styles.readinessScoreMax, { color: colors.mutedForeground }]}>/100</Text>
+              <View style={[styles.readinessLevelPill, { backgroundColor: rColor + '22', borderColor: rColor + '55' }]}>
+                <Text style={[styles.readinessLevelText, { color: rColor }]}>{level}</Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Score bar */}
+          <View style={[styles.readinessTrack, { backgroundColor: colors.muted }]}>
+            <View style={[styles.readinessFill, { width: `${score}%` as `${number}%`, backgroundColor: rColor }]} />
+          </View>
+
+          {/* Stats row */}
+          <View style={styles.readinessStats}>
+            {firstRepPeakMs !== null && firstRepPeakMs !== undefined && (
+              <View style={styles.readinessStat}>
+                <Text style={[styles.readinessStatLabel, { color: colors.mutedForeground }]}>TODAY'S 1ST REP</Text>
+                <Text style={[styles.readinessStatValue, { color: colors.foreground }]}>
+                  {firstRepPeakMs.toFixed(3)} m/s
+                </Text>
+              </View>
+            )}
+            {baselineVelocityMs !== null && baselineVelocityMs !== undefined && (
+              <View style={styles.readinessStat}>
+                <Text style={[styles.readinessStatLabel, { color: colors.mutedForeground }]}>21-DAY BASELINE</Text>
+                <Text style={[styles.readinessStatValue, { color: colors.foreground }]}>
+                  {baselineVelocityMs.toFixed(3)} m/s
+                </Text>
+              </View>
+            )}
+            <View style={styles.readinessStat}>
+              <Text style={[styles.readinessStatLabel, { color: colors.mutedForeground }]}>SESSIONS USED</Text>
+              <Text style={[styles.readinessStatValue, { color: colors.foreground }]}>{pts}</Text>
+            </View>
+          </View>
+        </>
+      ) : (
+        /* Building baseline state */
+        <View style={styles.readinessBuilding}>
+          <Text style={[styles.readinessBuildingTitle, { color: colors.foreground }]}>
+            Building baseline…
+          </Text>
+          <Text style={[styles.readinessBuildingSubtitle, { color: colors.mutedForeground }]}>
+            {pts}/3 load-matched sessions recorded. Complete {3 - pts} more {3 - pts === 1 ? 'set' : 'sets'} at this weight to unlock readiness tracking.
+          </Text>
+          {/* Progress pips */}
+          <View style={styles.readinessPips}>
+            {[0, 1, 2].map((i) => (
+              <View
+                key={i}
+                style={[
+                  styles.readinessPip,
+                  {
+                    backgroundColor: i < pts ? colors.primary : colors.muted,
+                    borderColor: i < pts ? colors.primary : colors.border,
+                  },
+                ]}
+              />
+            ))}
+          </View>
+        </View>
+      )}
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main screen
 // ---------------------------------------------------------------------------
 
@@ -706,6 +844,17 @@ export default function MotionTrackerScreen() {
                     </View>
                   ) : null}
 
+                  {/* CNS Motor Readiness card */}
+                  <ReadinessCard
+                    score={feedbackData.cns_readiness_score}
+                    level={feedbackData.motor_readiness_level as ReadinessLevel}
+                    trend={feedbackData.velocity_trend as VelocityTrend}
+                    dataPoints={feedbackData.readiness_data_points}
+                    baselineVelocityMs={feedbackData.baseline_velocity_ms}
+                    firstRepPeakMs={feedbackData.first_rep_peak_ms}
+                    colors={colors}
+                  />
+
                   {/* AI coaching card */}
                   <View style={[styles.feedbackCard, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
                     <View style={styles.feedbackCardHeader}>
@@ -945,6 +1094,57 @@ const styles = StyleSheet.create({
   primaryButtonText: { fontSize: 16, fontWeight: '800' },
   ghostButton: { alignItems: 'center', paddingVertical: 10 },
   ghostButtonText: { fontSize: 14, fontWeight: '600' },
+
+  // CNS Readiness card
+  readinessCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 16,
+    gap: 10,
+  },
+  readinessHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  trendBadge: { fontSize: 12, fontWeight: '800', letterSpacing: 0.3 },
+  readinessScoreRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  readinessScore: { fontSize: 52, fontWeight: '900', letterSpacing: -2, lineHeight: 56 },
+  readinessScoreSuffix: { gap: 5, paddingBottom: 6 },
+  readinessScoreMax: { fontSize: 14, fontWeight: '700' },
+  readinessLevelPill: {
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    alignSelf: 'flex-start',
+  },
+  readinessLevelText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.3 },
+  readinessTrack: {
+    height: 7,
+    borderRadius: 7,
+    overflow: 'hidden',
+  },
+  readinessFill: { height: 7, borderRadius: 7 },
+  readinessStats: { flexDirection: 'row', gap: 14, flexWrap: 'wrap' },
+  readinessStat: { gap: 2 },
+  readinessStatLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.1 },
+  readinessStatValue: { fontSize: 14, fontWeight: '700' },
+  readinessBuilding: { gap: 7 },
+  readinessBuildingTitle: { fontSize: 16, fontWeight: '700' },
+  readinessBuildingSubtitle: { fontSize: 13, lineHeight: 19 },
+  readinessPips: { flexDirection: 'row', gap: 8, marginTop: 2 },
+  readinessPip: {
+    width: 28,
+    height: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+
   footerText: {
     fontSize: 12,
     lineHeight: 18,
