@@ -613,10 +613,10 @@ export default function MotionTrackerScreen() {
               <View style={[styles.submittingCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <ActivityIndicator color={colors.primary} size="large" />
                 <Text style={[styles.submittingText, { color: colors.foreground }]}>
-                  Integrating velocity…
+                  Analysing your set…
                 </Text>
                 <Text style={[styles.helperText, { color: colors.mutedForeground }]}>
-                  Sending {sampleCount} samples to the coaching API
+                  Integrating {sampleCount} samples · building AI coaching report
                 </Text>
               </View>
             </View>
@@ -627,31 +627,99 @@ export default function MotionTrackerScreen() {
             <View style={styles.section}>
               {feedbackData ? (
                 <>
+                  {/* Velocity zone banner */}
+                  <View style={[styles.zoneBanner, { backgroundColor: colors.primary + '18', borderColor: colors.primary + '55' }]}>
+                    <Text style={[styles.zoneLabel, { color: colors.mutedForeground }]}>VELOCITY ZONE</Text>
+                    <Text style={[styles.zoneValue, { color: colors.primary }]}>{feedbackData.velocity_zone}</Text>
+                  </View>
+
+                  {/* Primary metrics row */}
                   <View style={styles.metricsRow}>
                     <MetricTile
                       label="MEAN VEL"
-                      value={feedbackData.mean_velocity_ms.toFixed(2)}
+                      value={feedbackData.mean_velocity_ms.toFixed(3)}
                       unit="m/s"
                       colors={colors}
                     />
                     <MetricTile
                       label="PEAK VEL"
-                      value={feedbackData.peak_velocity_ms.toFixed(2)}
+                      value={feedbackData.peak_velocity_ms.toFixed(3)}
                       unit="m/s"
                       colors={colors}
                     />
+                    <MetricTile
+                      label="EST. 1RM"
+                      value={`~${feedbackData.estimated_1rm_pct}`}
+                      unit="% 1RM"
+                      colors={colors}
+                    />
+                  </View>
+
+                  {/* Secondary metrics row */}
+                  <View style={styles.metricsRow}>
                     <MetricTile
                       label="DURATION"
                       value={feedbackData.duration_s.toFixed(1)}
                       unit="sec"
                       colors={colors}
                     />
+                    <MetricTile
+                      label="V-LOSS"
+                      value={feedbackData.velocity_loss_pct !== null ? `${feedbackData.velocity_loss_pct.toFixed(1)}%` : '—'}
+                      unit={feedbackData.velocity_loss_pct !== null ? '' : 'n/a'}
+                      colors={colors}
+                    />
+                    <MetricTile
+                      label="SAMPLES"
+                      value={String(feedbackData.sample_count)}
+                      unit="pts"
+                      colors={colors}
+                    />
                   </View>
 
+                  {/* Fatigue level pill */}
+                  {feedbackData.fatigue_level ? (
+                    <View style={[
+                      styles.fatiguePill,
+                      {
+                        backgroundColor:
+                          feedbackData.fatigue_level.startsWith('Fresh') ? colors.primary + '20'
+                          : feedbackData.fatigue_level.startsWith('Moderate') ? '#F59E0B20'
+                          : '#EF444420',
+                        borderColor:
+                          feedbackData.fatigue_level.startsWith('Fresh') ? colors.primary + '60'
+                          : feedbackData.fatigue_level.startsWith('Moderate') ? '#F59E0B60'
+                          : '#EF444460',
+                      },
+                    ]}>
+                      <Text style={[
+                        styles.fatiguePillText,
+                        {
+                          color:
+                            feedbackData.fatigue_level.startsWith('Fresh') ? colors.primary
+                            : feedbackData.fatigue_level.startsWith('Moderate') ? '#D97706'
+                            : '#DC2626',
+                        },
+                      ]}>
+                        {feedbackData.fatigue_level}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {/* AI coaching card */}
                   <View style={[styles.feedbackCard, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
-                    <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>
-                      COACH SAYS
-                    </Text>
+                    <View style={styles.feedbackCardHeader}>
+                      <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>
+                        COACH SAYS
+                      </Text>
+                      {feedbackData.sparkden_history_used && (
+                        <View style={[styles.sparkdenBadge, { backgroundColor: colors.primary + '25' }]}>
+                          <Text style={[styles.sparkdenBadgeText, { color: colors.primary }]}>
+                            ⚡ Sparkden history
+                          </Text>
+                        </View>
+                      )}
+                    </View>
                     <Text style={[styles.feedbackText, { color: colors.foreground }]}>
                       {feedbackData.ai_feedback}
                     </Text>
@@ -831,12 +899,40 @@ const styles = StyleSheet.create({
   metricLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.1 },
   metricValue: { fontSize: 22, fontWeight: '800', letterSpacing: -0.5 },
   metricUnit: { fontSize: 11, fontWeight: '600' },
+  zoneBanner: {
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    gap: 4,
+  },
+  zoneLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.3 },
+  zoneValue: { fontSize: 20, fontWeight: '800', letterSpacing: -0.5 },
+  fatiguePill: {
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    alignSelf: 'flex-start',
+  },
+  fatiguePillText: { fontSize: 12, fontWeight: '800', letterSpacing: 0.4 },
   feedbackCard: {
     borderRadius: 18,
     borderWidth: 1,
     padding: 17,
     gap: 8,
   },
+  feedbackCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  sparkdenBadge: {
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  sparkdenBadgeText: { fontSize: 10, fontWeight: '700' },
   feedbackText: { fontSize: 17, fontWeight: '600', lineHeight: 25 },
   errorText: { fontSize: 14, lineHeight: 20 },
   primaryButton: {

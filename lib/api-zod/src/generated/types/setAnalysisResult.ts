@@ -14,9 +14,20 @@ export interface SetAnalysisResult {
   mean_velocity_ms: number;
   /** Peak bar velocity in m/s */
   peak_velocity_ms: number;
+  /** Estimated percentage of 1RM based on exercise-specific load-velocity profile */
+  estimated_1rm_pct: number;
+  /** VBT training zone: Maximal Strength / Strength-Speed / Speed-Strength / Power / Starting */
+  velocity_zone: string;
+  /** Velocity loss from first to last rep (%). Null when fewer than 2 reps detected. */
+  velocity_loss_pct: number | null;
+  /** Qualitative fatigue classification based on velocity loss */
+  fatigue_level: string | null;
   /** Number of samples processed */
   sample_count: number;
   /** Total set duration in seconds */
   duration_s: number;
+  /** AI-generated coaching feedback grounded in VBT standards */
   ai_feedback: string;
+  /** Whether historical Sparkden session data was incorporated in the feedback */
+  sparkden_history_used: boolean;
 }
