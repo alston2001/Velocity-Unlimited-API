@@ -9,5 +9,6 @@
 export * from './accelerationSample';
 export * from './healthStatus';
 export * from './setAnalysisRequest';
+export * from './setAnalysisRequestPhonePlacement';
 export * from './setAnalysisResult';
 export * from './setAnalysisResultStatus';

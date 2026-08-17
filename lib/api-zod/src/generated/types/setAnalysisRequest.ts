@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { AccelerationSample } from './accelerationSample';
+import type { SetAnalysisRequestPhonePlacement } from './setAnalysisRequestPhonePlacement';
 
 /**
  * Exercise setup metadata and the raw sensor batch captured during a set
@@ -21,4 +22,6 @@ export interface SetAnalysisRequest {
   total_sets: number;
   /** Ordered raw acceleration samples captured during the set */
   samples: AccelerationSample[];
+  /** How the phone is mounted during the set. Affects which axis is used for velocity integration and how the AI coaching interprets the data. */
+  phone_placement?: SetAnalysisRequestPhonePlacement;
 }

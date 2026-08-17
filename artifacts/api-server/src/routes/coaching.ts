@@ -21,17 +21,45 @@ import {
 const router: IRouter = Router();
 
 // ---------------------------------------------------------------------------
-// Velocity integration — trapezoidal rule on Z-axis (gravity-corrected)
+// Velocity integration — trapezoidal rule, axis selected by placement
 // ---------------------------------------------------------------------------
+
+type PhonePlacement = "weight_stack" | "barbell" | "pocket";
+
+/**
+ * Extract the scalar "motion" acceleration from a sample, gravity-corrected.
+ *
+ * weight_stack / barbell: vertical Z-axis only (linear machine/bar path).
+ * pocket: root-mean-square of all three axes minus 1 G gravity baseline.
+ *   The gravity component direction is unknown when the phone is in a pocket,
+ *   so we subtract the per-axis baseline from sample[0] and use the residual
+ *   magnitude — this captures omnidirectional body movement cleanly.
+ */
+function extractAccel(
+  curr: { x: number; y: number; z: number },
+  baseline: { x: number; y: number; z: number },
+  placement: PhonePlacement,
+): number {
+  if (placement === "pocket") {
+    const dx = curr.x - baseline.x;
+    const dy = curr.y - baseline.y;
+    const dz = curr.z - baseline.z;
+    const sign = dz >= 0 ? 1 : -1;
+    return sign * Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+  // weight_stack or barbell — Z-axis (gravity-corrected)
+  return curr.z - baseline.z;
+}
 
 function integrateVelocity(
   samples: { x: number; y: number; z: number; timestamp: number }[],
+  placement: PhonePlacement = "weight_stack",
 ): { velocities: number[]; mean: number; peak: number } {
   if (samples.length < 2) {
     return { velocities: [], mean: 0, peak: 0 };
   }
 
-  const gravityZ = samples[0]!.z;
+  const baseline = samples[0]!;
   const velocities: number[] = [0];
   let velocity = 0;
   let sumAbsV = 0;
@@ -43,8 +71,8 @@ function integrateVelocity(
     const dt = (curr.timestamp - prev.timestamp) / 1000;
     if (dt <= 0) { velocities.push(velocity); continue; }
 
-    const aPrev = (prev.z - gravityZ) * 9.81;
-    const aCurr = (curr.z - gravityZ) * 9.81;
+    const aPrev = extractAccel(prev, baseline, placement) * 9.81;
+    const aCurr = extractAccel(curr, baseline, placement) * 9.81;
     velocity += 0.5 * (aPrev + aCurr) * dt;
     velocities.push(velocity);
 
@@ -60,6 +88,12 @@ function integrateVelocity(
 // ---------------------------------------------------------------------------
 // AI coaching prompt
 // ---------------------------------------------------------------------------
+
+const PLACEMENT_LABELS: Record<PhonePlacement, string> = {
+  weight_stack: "Weight stack / pulley pin (machine & cable)",
+  barbell: "Fixed to barbell / weight (free weights)",
+  pocket: "Pocket (bodyweight & plyometrics)",
+};
 
 interface CoachingContext {
   exerciseName: string;
@@ -81,6 +115,7 @@ interface CoachingContext {
   velocityTrend: string;
   baselineVelocityMs: number | null;
   readinessDataPoints: number;
+  phonePlacement: PhonePlacement;
 }
 
 async function generateCoachingFeedback(ctx: CoachingContext): Promise<string> {
@@ -116,12 +151,18 @@ When CNS readiness data is available, integrate it into your assessment — dist
 Never use generic motivational language. Always ground feedback in the data provided.
 Keep responses to 2–4 sentences maximum.`;
 
+  const placementNote =
+    ctx.phonePlacement === "pocket"
+      ? `\nSensor placement: ${PLACEMENT_LABELS[ctx.phonePlacement]}. Velocity data reflects full-body displacement magnitude rather than a single bar axis — interpret zone and loss values accordingly; absolute numbers will differ from barbell-mounted data.`
+      : `\nSensor placement: ${PLACEMENT_LABELS[ctx.phonePlacement]}.`;
+
   const userPrompt = `Analyze this completed set and give coaching feedback:
 
 Exercise: ${ctx.exerciseName}
 Load: ${ctx.weightKg.toFixed(1)} kg
 Target reps: ${ctx.targetReps} | Total sets planned: ${ctx.totalSets}
 Set duration: ${ctx.durationS.toFixed(1)} s
+${placementNote}
 
 Velocity metrics:
 - Mean velocity: ${ctx.meanVelocityMs.toFixed(3)} m/s
@@ -171,11 +212,13 @@ router.post("/analyze-set", async (req, res) => {
     return;
   }
 
-  const { exercise_name, weight_kg, target_reps, total_sets, samples } =
+  const { exercise_name, weight_kg, target_reps, total_sets, samples, phone_placement } =
     parsed.data;
 
-  // 1. Integrate velocity
-  const { velocities, mean, peak } = integrateVelocity(samples);
+  const placement: PhonePlacement = (phone_placement as PhonePlacement) ?? "weight_stack";
+
+  // 1. Integrate velocity (axis selected by placement)
+  const { velocities, mean, peak } = integrateVelocity(samples, placement);
 
   const durationS =
     samples.length >= 2
@@ -243,6 +286,7 @@ router.post("/analyze-set", async (req, res) => {
     velocityTrend: readinessResult.trend,
     baselineVelocityMs: readinessResult.baselineVelocityMs,
     readinessDataPoints: readinessResult.dataPoints,
+    phonePlacement: placement,
   });
 
   // 6. Persist this set for future readiness calculations

@@ -33,6 +33,34 @@ type Phase =
 
 type WeightUnit = 'kg' | 'lbs';
 
+type PhonePlacement = 'weight_stack' | 'barbell' | 'pocket';
+
+const PLACEMENT_OPTIONS: {
+  value: PhonePlacement;
+  label: string;
+  subtitle: string;
+  icon: string;
+}[] = [
+  {
+    value: 'weight_stack',
+    label: 'Weight Stack / Pulley Pin',
+    subtitle: 'Best for machines & cables with linear motion',
+    icon: '🏋️',
+  },
+  {
+    value: 'barbell',
+    label: 'Fixed to Barbell / Weight',
+    subtitle: 'Best for squat, bench, deadlift with a strap or magnet',
+    icon: '⚖️',
+  },
+  {
+    value: 'pocket',
+    label: 'In Your Pocket',
+    subtitle: 'Best for bodyweight & plyometrics — zero setup',
+    icon: '🩲',
+  },
+];
+
 type FormValues = {
   exerciseName: string;
   weight: string;
@@ -147,6 +175,57 @@ function FormField({
         returnKeyType="next"
         autoCorrect={false}
       />
+    </View>
+  );
+}
+
+function PlacementPicker({
+  selected,
+  onSelect,
+  colors,
+}: {
+  selected: PhonePlacement | null;
+  onSelect: (p: PhonePlacement) => void;
+  colors: ReturnType<typeof useColors>;
+}) {
+  return (
+    <View style={styles.placementSection}>
+      <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>PHONE PLACEMENT DURING SETS</Text>
+      {PLACEMENT_OPTIONS.map((opt) => {
+        const active = selected === opt.value;
+        return (
+          <Pressable
+            key={opt.value}
+            onPress={() => onSelect(opt.value)}
+            style={[
+              styles.placementOption,
+              {
+                backgroundColor: active ? colors.primary + '18' : colors.card,
+                borderColor: active ? colors.primary : colors.border,
+              },
+            ]}
+          >
+            <Text style={styles.placementIcon}>{opt.icon}</Text>
+            <View style={styles.placementText}>
+              <Text style={[styles.placementLabel, { color: active ? colors.primary : colors.foreground }]}>
+                {opt.label}
+              </Text>
+              <Text style={[styles.placementSubtitle, { color: colors.mutedForeground }]}>
+                {opt.subtitle}
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.placementRadio,
+                {
+                  borderColor: active ? colors.primary : colors.border,
+                  backgroundColor: active ? colors.primary : 'transparent',
+                },
+              ]}
+            />
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
@@ -510,6 +589,9 @@ export default function MotionTrackerScreen() {
   });
   const [sampleCount, setSampleCount] = useState(0);
 
+  // Phone placement
+  const [phonePlacement, setPhonePlacement] = useState<PhonePlacement | null>(null);
+
   // Session tracking
   const [sessionSets, setSessionSets] = useState<SessionSet[]>([]);
   const [setNumber, setSetNumber] = useState(1);
@@ -613,7 +695,8 @@ export default function MotionTrackerScreen() {
     form.exerciseName.trim().length > 0 &&
     parseFloat(form.weight) > 0 &&
     parseInt(form.targetReps) > 0 &&
-    parseInt(form.totalSets) > 0;
+    parseInt(form.totalSets) > 0 &&
+    phonePlacement !== null;
 
   /** Convert the current weight value when the unit toggle flips */
   function toggleWeightUnit() {
@@ -671,6 +754,7 @@ export default function MotionTrackerScreen() {
           target_reps: parseInt(form.targetReps),
           total_sets: parseInt(form.totalSets),
           samples,
+          phone_placement: phonePlacement ?? 'weight_stack',
         },
       },
       {
@@ -714,6 +798,7 @@ export default function MotionTrackerScreen() {
     setSessionSets([]);
     setLastSetResult(null);
     setRestTimerActive(false);
+    setPhonePlacement(null);
     analyzeSet.reset();
     setPhase('setup');
   }
@@ -887,6 +972,12 @@ export default function MotionTrackerScreen() {
                 </View>
               </View>
 
+              <PlacementPicker
+                selected={phonePlacement}
+                onSelect={setPhonePlacement}
+                colors={colors}
+              />
+
               <Pressable
                 accessibilityRole="button"
                 disabled={!formValid}
@@ -932,7 +1023,9 @@ export default function MotionTrackerScreen() {
               </View>
 
               <Text style={[styles.helperText, { color: colors.mutedForeground }]}>
-                Values are in G. Place the phone on the weight stack before starting.
+                {phonePlacement === 'pocket'
+                  ? 'Values are in G. Velocity uses full-body motion magnitude for pocket mode.'
+                  : 'Values are in G. Velocity is integrated from the Z-axis (vertical bar path).'}
               </Text>
             </View>
           )}
@@ -955,6 +1048,12 @@ export default function MotionTrackerScreen() {
                   <Text style={[styles.exerciseMetaText, { color: colors.mutedForeground }]}>
                     {form.weight} {form.weightUnit} · {form.targetReps} reps · {form.totalSets} sets
                   </Text>
+                  {phonePlacement && (
+                    <Text style={[styles.exerciseMetaText, { color: colors.mutedForeground, marginTop: 2 }]}>
+                      {PLACEMENT_OPTIONS.find((p) => p.value === phonePlacement)?.icon}{' '}
+                      {PLACEMENT_OPTIONS.find((p) => p.value === phonePlacement)?.label}
+                    </Text>
+                  )}
                 </View>
               </View>
 
@@ -992,7 +1091,11 @@ export default function MotionTrackerScreen() {
               <SessionStrip sets={sessionSets} colors={colors} />
 
               <Text style={[styles.instructionText, { color: colors.mutedForeground }]}>
-                Place your phone securely on the bar or weight stack, then tap Start Set.
+                {phonePlacement === 'pocket'
+                  ? 'Put the phone in your pocket, then tap Start Set when ready.'
+                  : phonePlacement === 'barbell'
+                  ? 'Strap or magnet the phone to the bar/plate, then tap Start Set.'
+                  : 'Place the phone on the weight stack or pulley pin, then tap Start Set.'}
               </Text>
 
               <Pressable
@@ -1579,6 +1682,27 @@ const styles = StyleSheet.create({
   sessionSetVel: { fontSize: 20, fontWeight: '900', letterSpacing: -0.5 },
   sessionSetUnit: { fontSize: 9, fontWeight: '700' },
   sessionSetReps: { fontSize: 9, fontWeight: '600', marginTop: 2 },
+
+  // Placement picker
+  placementSection: { gap: 8 },
+  placementOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 14,
+    gap: 12,
+  },
+  placementIcon: { fontSize: 26, width: 36, textAlign: 'center' },
+  placementText: { flex: 1, gap: 2 },
+  placementLabel: { fontSize: 14, fontWeight: '700', lineHeight: 20 },
+  placementSubtitle: { fontSize: 12, lineHeight: 17 },
+  placementRadio: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+  },
 
   footerText: {
     fontSize: 12,

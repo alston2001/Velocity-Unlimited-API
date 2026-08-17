@@ -109,6 +109,11 @@ components:
           description: Ordered raw acceleration samples captured during the set
           items:
             $ref: "#/components/schemas/AccelerationSample"
+        phone_placement:
+          type: string
+          enum: [weight_stack, barbell, pocket]
+          default: weight_stack
+          description: "How the phone is mounted during the set. Affects which axis is used for velocity integration and how the AI coaching interprets the data."
       required:
         - exercise_name
         - weight_kg

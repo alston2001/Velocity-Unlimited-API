@@ -19,6 +19,8 @@ export const ApiHomeResponse = zod.string()
  * Accepts a raw acceleration batch and returns velocity-integrated coaching feedback enriched with VBT profiles, CNS readiness score, and AI coaching text
  * @summary Analyze a set
  */
+export const analyzeSetBodyPhonePlacementDefault = `weight_stack`;
+
 export const AnalyzeSetBody = zod.object({
   "exercise_name": zod.string().describe('Name of the exercise (e.g. \"Bench Press\")'),
   "weight_kg": zod.number().describe('Load on the bar in kilograms'),
@@ -29,7 +31,8 @@ export const AnalyzeSetBody = zod.object({
   "y": zod.number().describe('Y-axis acceleration in G'),
   "z": zod.number().describe('Z-axis acceleration in G'),
   "timestamp": zod.number().describe('Unix timestamp in milliseconds when the sample was captured')
-}).describe('A single three-axis accelerometer reading with a millisecond timestamp')).describe('Ordered raw acceleration samples captured during the set')
+}).describe('A single three-axis accelerometer reading with a millisecond timestamp')).describe('Ordered raw acceleration samples captured during the set'),
+  "phone_placement": zod.enum(['weight_stack', 'barbell', 'pocket']).default(analyzeSetBodyPhonePlacementDefault).describe('How the phone is mounted during the set. Affects which axis is used for velocity integration and how the AI coaching interprets the data.')
 }).describe('Exercise setup metadata and the raw sensor batch captured during a set')
 
 export const AnalyzeSetResponse = zod.object({
