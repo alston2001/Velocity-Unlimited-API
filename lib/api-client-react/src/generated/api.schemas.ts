@@ -81,5 +81,9 @@ export interface SetAnalysisResult {
   readiness_data_points: number;
   /** The 21-day load-matched mean first-rep peak used as the readiness baseline. Null when insufficient data. */
   baseline_velocity_ms: number | null;
+  /** Number of reps detected from the velocity trace via peak-detection */
+  actual_reps: number;
+  /** Per-rep peak velocity in m/s, ordered first rep to last rep */
+  rep_peaks_ms: number[];
 }
 

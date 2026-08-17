@@ -286,6 +286,8 @@ router.post("/analyze-set", async (req, res) => {
     velocity_trend: readinessResult.trend,
     readiness_data_points: readinessResult.dataPoints,
     baseline_velocity_ms: readinessResult.baselineVelocityMs,
+    actual_reps: actualReps,
+    rep_peaks_ms: repPeaks.map((v) => Math.round(v * 1000) / 1000),
   });
 });
 

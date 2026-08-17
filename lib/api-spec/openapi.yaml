@@ -178,6 +178,14 @@ components:
           type: number
           description: "The 21-day load-matched mean first-rep peak used as the readiness baseline. Null when insufficient data."
           nullable: true
+        actual_reps:
+          type: integer
+          description: Number of reps detected from the velocity trace via peak-detection
+        rep_peaks_ms:
+          type: array
+          description: Per-rep peak velocity in m/s, ordered first rep to last rep
+          items:
+            type: number
       required:
         - status
         - exercise_name
@@ -197,3 +205,5 @@ components:
         - velocity_trend
         - readiness_data_points
         - baseline_velocity_ms
+        - actual_reps
+        - rep_peaks_ms

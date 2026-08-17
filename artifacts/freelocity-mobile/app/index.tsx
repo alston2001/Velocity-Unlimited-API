@@ -1,6 +1,8 @@
 import { useAnalyzeSet } from '@workspace/api-client-react';
-import type { AccelerationSample } from '@workspace/api-client-react';
+import type { AccelerationSample, SetAnalysisResult } from '@workspace/api-client-react';
 import { Accelerometer } from 'expo-sensors';
+import * as Haptics from 'expo-haptics';
+import { useKeepAwake } from 'expo-keep-awake';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -41,6 +43,18 @@ type FormValues = {
 
 const RECORD_HZ = 50; // 50 Hz during recording
 const IDLE_HZ = 10;   // 10 Hz for live preview only
+
+type SessionSet = {
+  setNum: number;
+  meanVelocityMs: number;
+  peakVelocityMs: number;
+  zone: string;
+  actualReps: number;
+  weightKg: number;
+  estimated1RmPct: number;
+};
+
+const REST_PRESETS = [60, 90, 120, 180] as const;
 
 // ---------------------------------------------------------------------------
 // Sub-components
@@ -153,6 +167,180 @@ function MetricTile({
       <Text style={[styles.metricLabel, { color: colors.mutedForeground }]}>{label}</Text>
       <Text style={[styles.metricValue, { color: colors.foreground }]}>{value}</Text>
       <Text style={[styles.metricUnit, { color: colors.mutedForeground }]}>{unit}</Text>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Rep-by-rep velocity bars
+// ---------------------------------------------------------------------------
+
+function zoneColor(zone: string, colors: ReturnType<typeof useColors>): string {
+  if (zone.includes('Power'))    return '#22C55E';
+  if (zone.includes('Speed-Strength')) return '#84CC16';
+  if (zone.includes('Strength-Speed')) return '#F59E0B';
+  if (zone.includes('Maximal'))  return colors.primary;
+  return colors.mutedForeground;
+}
+
+function RepVelocityBars({
+  repPeaks,
+  colors,
+}: {
+  repPeaks: number[];
+  colors: ReturnType<typeof useColors>;
+}) {
+  if (repPeaks.length === 0) return null;
+  const maxV = Math.max(...repPeaks, 0.01);
+  const firstPeak = repPeaks[0]!;
+
+  return (
+    <View style={[styles.repBarsCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>REP-BY-REP VELOCITY</Text>
+      <View style={styles.repBarsGrid}>
+        {repPeaks.map((v, i) => {
+          const pct = v / maxV;
+          const dropPct = i > 0 ? ((firstPeak - v) / firstPeak) * 100 : 0;
+          const barColor = dropPct > 20 ? '#EF4444' : dropPct > 10 ? '#F59E0B' : '#22C55E';
+          return (
+            <View key={i} style={styles.repBarCol}>
+              <Text style={[styles.repBarValue, { color: barColor }]}>
+                {v.toFixed(2)}
+              </Text>
+              <View style={[styles.repBarTrack, { backgroundColor: colors.muted }]}>
+                <View
+                  style={[
+                    styles.repBarFill,
+                    {
+                      height: `${Math.max(pct * 100, 6)}%` as `${number}%`,
+                      backgroundColor: barColor,
+                    },
+                  ]}
+                />
+              </View>
+              <Text style={[styles.repBarLabel, { color: colors.mutedForeground }]}>
+                R{i + 1}
+              </Text>
+            </View>
+          );
+        })}
+      </View>
+      <Text style={[styles.helperText, { color: colors.mutedForeground }]}>
+        m/s peak per rep · green &gt;10% above threshold · red &gt;20% velocity loss
+      </Text>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Rest timer
+// ---------------------------------------------------------------------------
+
+function RestTimer({
+  secsLeft,
+  target,
+  onPreset,
+  onSkip,
+  colors,
+}: {
+  secsLeft: number;
+  target: number;
+  onPreset: (secs: number) => void;
+  onSkip: () => void;
+  colors: ReturnType<typeof useColors>;
+}) {
+  const done = secsLeft <= 0;
+  const pct = done ? 1 : (target - secsLeft) / target;
+  const mins = Math.floor(secsLeft / 60);
+  const secs = secsLeft % 60;
+  const label = done ? 'REST COMPLETE' : 'REST TIMER';
+  const timerColor = done ? '#22C55E' : secsLeft < 15 ? colors.primary : colors.foreground;
+
+  return (
+    <View style={[styles.restCard, { backgroundColor: colors.card, borderColor: done ? '#22C55E55' : colors.border }]}>
+      <View style={styles.restHeader}>
+        <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>{label}</Text>
+        <Pressable onPress={onSkip} hitSlop={12}>
+          <Text style={[styles.restSkip, { color: colors.mutedForeground }]}>Skip</Text>
+        </Pressable>
+      </View>
+
+      {/* Progress bar */}
+      <View style={[styles.restTrack, { backgroundColor: colors.muted }]}>
+        <View style={[styles.restFill, { width: `${pct * 100}%` as `${number}%`, backgroundColor: done ? '#22C55E' : colors.primary }]} />
+      </View>
+
+      {/* Time display */}
+      <Text style={[styles.restTime, { color: timerColor }]}>
+        {done ? '✓  Go' : `${mins}:${String(secs).padStart(2, '0')}`}
+      </Text>
+
+      {/* Preset buttons */}
+      <View style={styles.restPresets}>
+        {REST_PRESETS.map((t) => (
+          <Pressable
+            key={t}
+            onPress={() => onPreset(t)}
+            style={({ pressed }) => [
+              styles.restPreset,
+              {
+                backgroundColor: t === target ? colors.primary + '25' : colors.muted,
+                borderColor: t === target ? colors.primary + '80' : colors.border,
+                opacity: pressed ? 0.7 : 1,
+              },
+            ]}
+          >
+            <Text style={[styles.restPresetText, { color: t === target ? colors.primary : colors.mutedForeground }]}>
+              {t}s
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Session log strip
+// ---------------------------------------------------------------------------
+
+function SessionStrip({
+  sets,
+  colors,
+}: {
+  sets: SessionSet[];
+  colors: ReturnType<typeof useColors>;
+}) {
+  if (sets.length === 0) return null;
+
+  return (
+    <View style={[styles.sessionStrip, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>
+        SESSION LOG — {sets.length} {sets.length === 1 ? 'set' : 'sets'}
+      </Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.sessionScroll}>
+        {sets.map((s) => {
+          const zColor = zoneColor(s.zone, colors);
+          return (
+            <View
+              key={s.setNum}
+              style={[
+                styles.sessionSetChip,
+                { backgroundColor: zColor + '18', borderColor: zColor + '55' },
+              ]}
+            >
+              <Text style={[styles.sessionSetNum, { color: colors.mutedForeground }]}>S{s.setNum}</Text>
+              <Text style={[styles.sessionSetVel, { color: zColor }]}>
+                {s.meanVelocityMs.toFixed(3)}
+              </Text>
+              <Text style={[styles.sessionSetUnit, { color: colors.mutedForeground }]}>m/s</Text>
+              <Text style={[styles.sessionSetReps, { color: colors.mutedForeground }]}>
+                {s.actualReps}r · ~{s.estimated1RmPct}%
+              </Text>
+            </View>
+          );
+        })}
+      </ScrollView>
     </View>
   );
 }
@@ -303,6 +491,9 @@ export default function MotionTrackerScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
 
+  // Keep screen on while recording
+  useKeepAwake();
+
   // Sensor
   const [sensorAvailable, setSensorAvailable] = useState<boolean | null>(null);
   const [live, setLive] = useState<SensorReading>({ x: 0, y: 0, z: 0 });
@@ -319,7 +510,35 @@ export default function MotionTrackerScreen() {
   });
   const [sampleCount, setSampleCount] = useState(0);
 
+  // Session tracking
+  const [sessionSets, setSessionSets] = useState<SessionSet[]>([]);
+  const [setNumber, setSetNumber] = useState(1);
+  const [lastSetResult, setLastSetResult] = useState<SetAnalysisResult | null>(null);
+
+  // Rest timer
+  const [restTimerTarget, setRestTimerTarget] = useState(90);
+  const [restTimerSecs, setRestTimerSecs] = useState(0);
+  const [restTimerActive, setRestTimerActive] = useState(false);
+
   const analyzeSet = useAnalyzeSet();
+
+  // ---------------------------------------------------------------------------
+  // Rest timer tick
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    if (!restTimerActive) return;
+    if (restTimerSecs <= 0) {
+      setRestTimerActive(false);
+      // Haptic nudge when rest is done (native only)
+      if (Platform.OS !== 'web') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      }
+      return;
+    }
+    const t = setTimeout(() => setRestTimerSecs((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [restTimerActive, restTimerSecs]);
 
   // ---------------------------------------------------------------------------
   // Accelerometer
@@ -430,12 +649,19 @@ export default function MotionTrackerScreen() {
   function handleStartSet() {
     sampleBuffer.current = [];
     setSampleCount(0);
+    setRestTimerActive(false); // stop rest timer when set begins
     setPhase('recording');
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
+    }
   }
 
   function handleStopSet() {
     const samples = [...sampleBuffer.current];
     setPhase('submitting');
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    }
 
     analyzeSet.mutate(
       {
@@ -448,7 +674,26 @@ export default function MotionTrackerScreen() {
         },
       },
       {
-        onSuccess: () => setPhase('feedback'),
+        onSuccess: (data) => {
+          setPhase('feedback');
+          setLastSetResult(data);
+          // Accumulate session log (only if real movement detected)
+          if (data.mean_velocity_ms > 0.05) {
+            const entry: SessionSet = {
+              setNum: setNumber,
+              meanVelocityMs: data.mean_velocity_ms,
+              peakVelocityMs: data.peak_velocity_ms,
+              zone: data.velocity_zone,
+              actualReps: data.actual_reps,
+              weightKg: weightAsKg(),
+              estimated1RmPct: data.estimated_1rm_pct,
+            };
+            setSessionSets((prev) => [...prev, entry]);
+          }
+          // Auto-start rest timer
+          setRestTimerSecs(restTimerTarget);
+          setRestTimerActive(true);
+        },
         onError: () => setPhase('feedback'),
       },
     );
@@ -457,15 +702,31 @@ export default function MotionTrackerScreen() {
   function handleNewSet() {
     sampleBuffer.current = [];
     setSampleCount(0);
+    setSetNumber((n) => n + 1);
     analyzeSet.reset();
-    setPhase('ready'); // back to ready with same exercise config
+    setPhase('ready');
   }
 
   function handleNewExercise() {
     sampleBuffer.current = [];
     setSampleCount(0);
+    setSetNumber(1);
+    setSessionSets([]);
+    setLastSetResult(null);
+    setRestTimerActive(false);
     analyzeSet.reset();
     setPhase('setup');
+  }
+
+  function handleRestPreset(secs: number) {
+    setRestTimerTarget(secs);
+    setRestTimerSecs(secs);
+    setRestTimerActive(true);
+  }
+
+  function handleRestSkip() {
+    setRestTimerActive(false);
+    setRestTimerSecs(0);
   }
 
   // ---------------------------------------------------------------------------
@@ -679,8 +940,14 @@ export default function MotionTrackerScreen() {
           {/* ---- Phase: READY — exercise summary + Start Set ---- */}
           {phase === 'ready' && (
             <View style={styles.section}>
+              {/* Set number + exercise header */}
               <View style={[styles.exerciseSummary, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
-                <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>EXERCISE</Text>
+                <View style={styles.exerciseSummaryHeader}>
+                  <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>EXERCISE</Text>
+                  <View style={[styles.setNumBadge, { backgroundColor: colors.primary + '22', borderColor: colors.primary + '55' }]}>
+                    <Text style={[styles.setNumText, { color: colors.primary }]}>SET {setNumber}</Text>
+                  </View>
+                </View>
                 <Text style={[styles.exerciseName, { color: colors.foreground }]}>
                   {form.exerciseName}
                 </Text>
@@ -690,6 +957,39 @@ export default function MotionTrackerScreen() {
                   </Text>
                 </View>
               </View>
+
+              {/* Last set context card */}
+              {lastSetResult && lastSetResult.mean_velocity_ms > 0.05 && (
+                <View style={[styles.lastSetCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                  <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>LAST SET TARGET</Text>
+                  <Text style={[styles.lastSetSubtitle, { color: colors.mutedForeground }]}>
+                    Match or beat {lastSetResult.mean_velocity_ms.toFixed(3)} m/s mean · {lastSetResult.actual_reps} reps detected
+                  </Text>
+                  <View style={styles.lastSetRow}>
+                    <View style={styles.lastSetStat}>
+                      <Text style={[styles.lastSetStatVal, { color: colors.foreground }]}>{lastSetResult.mean_velocity_ms.toFixed(3)}</Text>
+                      <Text style={[styles.lastSetStatLabel, { color: colors.mutedForeground }]}>mean m/s</Text>
+                    </View>
+                    <View style={styles.lastSetStat}>
+                      <Text style={[styles.lastSetStatVal, { color: colors.foreground }]}>{lastSetResult.peak_velocity_ms.toFixed(3)}</Text>
+                      <Text style={[styles.lastSetStatLabel, { color: colors.mutedForeground }]}>peak m/s</Text>
+                    </View>
+                    {lastSetResult.velocity_loss_pct !== null && (
+                      <View style={styles.lastSetStat}>
+                        <Text style={[styles.lastSetStatVal, { color: colors.foreground }]}>{lastSetResult.velocity_loss_pct.toFixed(1)}%</Text>
+                        <Text style={[styles.lastSetStatLabel, { color: colors.mutedForeground }]}>v-loss</Text>
+                      </View>
+                    )}
+                    <View style={styles.lastSetStat}>
+                      <Text style={[styles.lastSetStatVal, { color: colors.foreground }]}>~{lastSetResult.estimated_1rm_pct}%</Text>
+                      <Text style={[styles.lastSetStatLabel, { color: colors.mutedForeground }]}>1RM</Text>
+                    </View>
+                  </View>
+                </View>
+              )}
+
+              {/* Session log strip */}
+              <SessionStrip sets={sessionSets} colors={colors} />
 
               <Text style={[styles.instructionText, { color: colors.mutedForeground }]}>
                 Place your phone securely on the bar or weight stack, then tap Start Set.
@@ -704,7 +1004,7 @@ export default function MotionTrackerScreen() {
                 ]}
               >
                 <Text style={[styles.primaryButtonText, { color: colors.primaryForeground }]}>
-                  ▶  Start Set
+                  ▶  Start Set {setNumber}
                 </Text>
               </Pressable>
 
@@ -765,9 +1065,19 @@ export default function MotionTrackerScreen() {
             <View style={styles.section}>
               {feedbackData ? (
                 <>
+                  {/* Motion gate — no movement detected */}
+                  {feedbackData.velocity_zone === 'No movement' ? (
+                    <View style={[styles.feedbackCard, { backgroundColor: '#F59E0B15', borderColor: '#F59E0B55' }]}>
+                      <Text style={[styles.sectionLabel, { color: '#D97706' }]}>NO MOVEMENT DETECTED</Text>
+                      <Text style={[styles.feedbackText, { color: colors.foreground }]}>
+                        The phone didn't detect meaningful bar movement. Make sure it's secured to the bar or weight stack before recording.
+                      </Text>
+                    </View>
+                  ) : (
+                  <>
                   {/* Velocity zone banner */}
                   <View style={[styles.zoneBanner, { backgroundColor: colors.primary + '18', borderColor: colors.primary + '55' }]}>
-                    <Text style={[styles.zoneLabel, { color: colors.mutedForeground }]}>VELOCITY ZONE</Text>
+                    <Text style={[styles.zoneLabel, { color: colors.mutedForeground }]}>VELOCITY ZONE · SET {setNumber}</Text>
                     <Text style={[styles.zoneValue, { color: colors.primary }]}>{feedbackData.velocity_zone}</Text>
                   </View>
 
@@ -808,9 +1118,9 @@ export default function MotionTrackerScreen() {
                       colors={colors}
                     />
                     <MetricTile
-                      label="SAMPLES"
-                      value={String(feedbackData.sample_count)}
-                      unit="pts"
+                      label="REPS DET."
+                      value={String(feedbackData.actual_reps)}
+                      unit="reps"
                       colors={colors}
                     />
                   </View>
@@ -844,6 +1154,11 @@ export default function MotionTrackerScreen() {
                     </View>
                   ) : null}
 
+                  {/* Rep-by-rep velocity bars */}
+                  {feedbackData.rep_peaks_ms && feedbackData.rep_peaks_ms.length > 0 && (
+                    <RepVelocityBars repPeaks={feedbackData.rep_peaks_ms} colors={colors} />
+                  )}
+
                   {/* CNS Motor Readiness card */}
                   <ReadinessCard
                     score={feedbackData.cns_readiness_score}
@@ -873,6 +1188,20 @@ export default function MotionTrackerScreen() {
                       {feedbackData.ai_feedback}
                     </Text>
                   </View>
+
+                  {/* Rest timer */}
+                  <RestTimer
+                    secsLeft={restTimerSecs}
+                    target={restTimerTarget}
+                    onPreset={handleRestPreset}
+                    onSkip={handleRestSkip}
+                    colors={colors}
+                  />
+
+                  {/* Session log strip */}
+                  <SessionStrip sets={sessionSets} colors={colors} />
+                  </>
+                  )}
                 </>
               ) : analyzeSet.error ? (
                 <View style={[styles.feedbackCard, { backgroundColor: colors.muted, borderColor: colors.border }]}>
@@ -1144,6 +1473,112 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
   },
+
+  // Ready phase — set number + last set card
+  exerciseSummaryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 2,
+  },
+  setNumBadge: {
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+  },
+  setNumText: { fontSize: 10, fontWeight: '800', letterSpacing: 1 },
+  lastSetCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 14,
+    gap: 8,
+  },
+  lastSetSubtitle: { fontSize: 12, lineHeight: 17 },
+  lastSetRow: { flexDirection: 'row', gap: 18, flexWrap: 'wrap' },
+  lastSetStat: { gap: 1 },
+  lastSetStatVal: { fontSize: 18, fontWeight: '800', letterSpacing: -0.4 },
+  lastSetStatLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 0.8 },
+
+  // Rep-by-rep bars
+  repBarsCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 14,
+    gap: 10,
+  },
+  repBarsGrid: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 6,
+    height: 90,
+  },
+  repBarCol: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 4,
+    height: '100%',
+    justifyContent: 'flex-end',
+  },
+  repBarValue: { fontSize: 9, fontWeight: '800', letterSpacing: 0 },
+  repBarTrack: {
+    width: '100%',
+    flex: 1,
+    borderRadius: 6,
+    justifyContent: 'flex-end',
+    overflow: 'hidden',
+  },
+  repBarFill: { width: '100%', borderRadius: 6 },
+  repBarLabel: { fontSize: 9, fontWeight: '700' },
+
+  // Rest timer
+  restCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 14,
+    gap: 10,
+  },
+  restHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  restSkip: { fontSize: 13, fontWeight: '600' },
+  restTrack: { height: 6, borderRadius: 6, overflow: 'hidden' },
+  restFill: { height: 6, borderRadius: 6 },
+  restTime: { fontSize: 40, fontWeight: '900', letterSpacing: -2, textAlign: 'center' },
+  restPresets: { flexDirection: 'row', gap: 8 },
+  restPreset: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: 'center',
+  },
+  restPresetText: { fontSize: 12, fontWeight: '800' },
+
+  // Session strip
+  sessionStrip: {
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 14,
+    gap: 10,
+  },
+  sessionScroll: { marginHorizontal: -4 },
+  sessionSetChip: {
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginHorizontal: 4,
+    alignItems: 'center',
+    minWidth: 70,
+    gap: 2,
+  },
+  sessionSetNum: { fontSize: 9, fontWeight: '800', letterSpacing: 0.8 },
+  sessionSetVel: { fontSize: 20, fontWeight: '900', letterSpacing: -0.5 },
+  sessionSetUnit: { fontSize: 9, fontWeight: '700' },
+  sessionSetReps: { fontSize: 9, fontWeight: '600', marginTop: 2 },
 
   footerText: {
     fontSize: 12,

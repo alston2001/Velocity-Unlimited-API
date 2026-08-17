@@ -50,7 +50,9 @@ export const AnalyzeSetResponse = zod.object({
   "motor_readiness_level": zod.string().nullable().describe('Qualitative readiness classification: High \/ Moderate \/ Low \/ Compromised \/ Insufficient data'),
   "velocity_trend": zod.string().nullable().describe('Session-to-session velocity trend: Rising \/ Stable \/ Declining \/ Insufficient data'),
   "readiness_data_points": zod.number().int().describe('Number of historical load-matched sessions used to compute readiness'),
-  "baseline_velocity_ms": zod.number().nullable().describe('The 21-day load-matched mean first-rep peak used as the readiness baseline. Null when insufficient data.')
+  "baseline_velocity_ms": zod.number().nullable().describe('The 21-day load-matched mean first-rep peak used as the readiness baseline. Null when insufficient data.'),
+  "actual_reps": zod.number().int().describe('Number of reps detected from the velocity trace via peak-detection'),
+  "rep_peaks_ms": zod.array(zod.number()).describe('Per-rep peak velocity in m\/s, ordered first rep to last rep')
 })
 
 
