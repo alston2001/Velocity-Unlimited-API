@@ -10,7 +10,16 @@ const feedbacks = [
 ] as const;
 
 router.get("/", (_req, res) => {
-  res.type("text/plain").send("Velocity Unlimited API is live!");
+  const sparkdenConfigured = Boolean(
+    process.env["VELOCITY_CLIENT_ID"] &&
+      process.env["VELOCITY_CLIENT_SECRET"],
+  );
+
+  const message = sparkdenConfigured
+    ? "Freelocity API is live! Sparkden connection is configured."
+    : "Freelocity API is live! Sparkden keys are missing.";
+
+  res.type("text/plain").send(message);
 });
 
 router.post("/analyze-set", (_req, res) => {
