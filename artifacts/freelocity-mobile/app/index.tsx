@@ -29,9 +29,12 @@ type Phase =
   | 'submitting' // Sending batch to API
   | 'feedback';  // Results shown
 
+type WeightUnit = 'kg' | 'lbs';
+
 type FormValues = {
   exerciseName: string;
-  weightKg: string;
+  weight: string;
+  weightUnit: WeightUnit;
   targetReps: string;
   totalSets: string;
 };
@@ -171,7 +174,8 @@ export default function MotionTrackerScreen() {
   const [phase, setPhase] = useState<Phase>('setup');
   const [form, setForm] = useState<FormValues>({
     exerciseName: '',
-    weightKg: '',
+    weight: '',
+    weightUnit: 'kg',
     targetReps: '',
     totalSets: '',
   });
@@ -250,9 +254,30 @@ export default function MotionTrackerScreen() {
 
   const formValid =
     form.exerciseName.trim().length > 0 &&
-    parseFloat(form.weightKg) > 0 &&
+    parseFloat(form.weight) > 0 &&
     parseInt(form.targetReps) > 0 &&
     parseInt(form.totalSets) > 0;
+
+  /** Convert the current weight value when the unit toggle flips */
+  function toggleWeightUnit() {
+    setForm((f) => {
+      const val = parseFloat(f.weight);
+      const newUnit: WeightUnit = f.weightUnit === 'kg' ? 'lbs' : 'kg';
+      let newWeight = f.weight;
+      if (!isNaN(val) && val > 0) {
+        const converted = newUnit === 'lbs' ? val * 2.20462 : val / 2.20462;
+        newWeight = parseFloat(converted.toFixed(1)).toString();
+      }
+      return { ...f, weightUnit: newUnit, weight: newWeight };
+    });
+  }
+
+  /** Always send kg to the API regardless of display unit */
+  function weightAsKg(): number {
+    const val = parseFloat(form.weight);
+    if (isNaN(val)) return 0;
+    return form.weightUnit === 'lbs' ? val / 2.20462 : val;
+  }
 
   // ---------------------------------------------------------------------------
   // Actions
@@ -278,7 +303,7 @@ export default function MotionTrackerScreen() {
       {
         data: {
           exercise_name: form.exerciseName.trim(),
-          weight_kg: parseFloat(form.weightKg),
+          weight_kg: weightAsKg(),
           target_reps: parseInt(form.targetReps),
           total_sets: parseInt(form.totalSets),
           samples,
@@ -391,14 +416,54 @@ export default function MotionTrackerScreen() {
                   placeholder="e.g. Bench Press"
                   colors={colors}
                 />
-                <FormField
-                  label="WEIGHT (KG)"
-                  value={form.weightKg}
-                  onChangeText={setField('weightKg')}
-                  placeholder="e.g. 100"
-                  keyboardType="decimal-pad"
-                  colors={colors}
-                />
+                {/* Weight + unit toggle */}
+                <View style={styles.fieldWrap}>
+                  <View style={styles.weightLabelRow}>
+                    <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>WEIGHT</Text>
+                    <View style={[styles.unitToggle, { backgroundColor: colors.muted }]}>
+                      {(['kg', 'lbs'] as WeightUnit[]).map((u) => (
+                        <Pressable
+                          key={u}
+                          onPress={toggleWeightUnit}
+                          style={[
+                            styles.unitOption,
+                            form.weightUnit === u && { backgroundColor: colors.primary },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.unitOptionText,
+                              {
+                                color:
+                                  form.weightUnit === u
+                                    ? colors.primaryForeground
+                                    : colors.mutedForeground,
+                              },
+                            ]}
+                          >
+                            {u}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </View>
+                  <TextInput
+                    style={[
+                      styles.fieldInput,
+                      {
+                        backgroundColor: colors.card,
+                        borderColor: colors.border,
+                        color: colors.foreground,
+                      },
+                    ]}
+                    value={form.weight}
+                    onChangeText={setField('weight')}
+                    placeholder={form.weightUnit === 'kg' ? 'e.g. 100' : 'e.g. 225'}
+                    placeholderTextColor={colors.mutedForeground + '80'}
+                    keyboardType="decimal-pad"
+                    returnKeyType="next"
+                  />
+                </View>
                 <View style={styles.fieldRow}>
                   <View style={{ flex: 1 }}>
                     <FormField
@@ -483,7 +548,7 @@ export default function MotionTrackerScreen() {
                 </Text>
                 <View style={styles.exerciseMeta}>
                   <Text style={[styles.exerciseMetaText, { color: colors.mutedForeground }]}>
-                    {form.weightKg} kg · {form.targetReps} reps · {form.totalSets} sets
+                    {form.weight} {form.weightUnit} · {form.targetReps} reps · {form.totalSets} sets
                   </Text>
                 </View>
               </View>
@@ -670,6 +735,27 @@ const styles = StyleSheet.create({
   fieldRow: { flexDirection: 'row', gap: 12 },
   fieldWrap: { gap: 6 },
   fieldLabel: { fontSize: 10, fontWeight: '800', letterSpacing: 1.2 },
+  weightLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  unitToggle: {
+    flexDirection: 'row',
+    borderRadius: 8,
+    padding: 2,
+    gap: 2,
+  },
+  unitOption: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  unitOptionText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
   fieldInput: {
     borderRadius: 12,
     borderWidth: 1,
