@@ -31,10 +31,16 @@ paths:
       operationId: analyzeSet
       tags: [coaching]
       summary: Analyze a set
-      description: Returns simulated AI feedback for a submitted set
+      description: Accepts a raw acceleration batch and returns velocity-integrated coaching feedback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetAnalysisRequest"
       responses:
         "200":
-          description: Simulated coaching feedback
+          description: Coaching feedback with velocity metrics
           content:
             application/json:
               schema:
@@ -61,19 +67,81 @@ components:
           type: string
       required:
         - status
+    AccelerationSample:
+      type: object
+      description: A single three-axis accelerometer reading with a millisecond timestamp
+      properties:
+        x:
+          type: number
+          description: X-axis acceleration in G
+        y:
+          type: number
+          description: Y-axis acceleration in G
+        z:
+          type: number
+          description: Z-axis acceleration in G
+        timestamp:
+          type: number
+          description: Unix timestamp in milliseconds when the sample was captured
+      required:
+        - x
+        - y
+        - z
+        - timestamp
+    SetAnalysisRequest:
+      type: object
+      description: Exercise setup metadata and the raw sensor batch captured during a set
+      properties:
+        exercise_name:
+          type: string
+          description: Name of the exercise (e.g. "Bench Press")
+        weight_kg:
+          type: number
+          description: Load on the bar in kilograms
+        target_reps:
+          type: integer
+          description: Planned rep count for the set
+        total_sets:
+          type: integer
+          description: Total sets planned in the workout
+        samples:
+          type: array
+          description: Ordered raw acceleration samples captured during the set
+          items:
+            $ref: "#/components/schemas/AccelerationSample"
+      required:
+        - exercise_name
+        - weight_kg
+        - target_reps
+        - total_sets
+        - samples
     SetAnalysisResult:
       type: object
       properties:
         status:
           type: string
           enum: [success]
+        exercise_name:
+          type: string
+        mean_velocity_ms:
+          type: number
+          description: Mean bar velocity in m/s integrated from the acceleration batch
+        peak_velocity_ms:
+          type: number
+          description: Peak bar velocity in m/s
+        sample_count:
+          type: integer
+          description: Number of samples processed
+        duration_s:
+          type: number
+          description: Total set duration in seconds
         ai_feedback:
           type: string
-          enum:
-            - Perfect tempo!
-            - Too fast on the way down.
-            - Struggling, rack it.
       required:
         - status
+        - exercise_name
+        - mean_velocity_ms
+        - peak_velocity_ms
+        - sample_count
+        - duration_s
         - ai_feedback
-

@@ -16,12 +16,30 @@ export const ApiHomeResponse = zod.string()
 
 
 /**
- * Returns simulated AI feedback for a submitted set
+ * Accepts a raw acceleration batch and returns velocity-integrated coaching feedback
  * @summary Analyze a set
  */
+export const AnalyzeSetBody = zod.object({
+  "exercise_name": zod.string().describe('Name of the exercise (e.g. \"Bench Press\")'),
+  "weight_kg": zod.number().describe('Load on the bar in kilograms'),
+  "target_reps": zod.number().int().describe('Planned rep count for the set'),
+  "total_sets": zod.number().int().describe('Total sets planned in the workout'),
+  "samples": zod.array(zod.object({
+  "x": zod.number().describe('X-axis acceleration in G'),
+  "y": zod.number().describe('Y-axis acceleration in G'),
+  "z": zod.number().describe('Z-axis acceleration in G'),
+  "timestamp": zod.number().describe('Unix timestamp in milliseconds when the sample was captured')
+}).describe('A single three-axis accelerometer reading with a millisecond timestamp')).describe('Ordered raw acceleration samples captured during the set')
+}).describe('Exercise setup metadata and the raw sensor batch captured during a set')
+
 export const AnalyzeSetResponse = zod.object({
   "status": zod.enum(['success']),
-  "ai_feedback": zod.enum(['Perfect tempo!', 'Too fast on the way down.', 'Struggling, rack it.'])
+  "exercise_name": zod.string(),
+  "mean_velocity_ms": zod.number().describe('Mean bar velocity in m\/s integrated from the acceleration batch'),
+  "peak_velocity_ms": zod.number().describe('Peak bar velocity in m\/s'),
+  "sample_count": zod.number().int().describe('Number of samples processed'),
+  "duration_s": zod.number().describe('Total set duration in seconds'),
+  "ai_feedback": zod.string()
 })
 
 

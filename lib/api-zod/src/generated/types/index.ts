@@ -6,7 +6,8 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from './accelerationSample';
 export * from './healthStatus';
+export * from './setAnalysisRequest';
 export * from './setAnalysisResult';
-export * from './setAnalysisResultAiFeedback';
 export * from './setAnalysisResultStatus';

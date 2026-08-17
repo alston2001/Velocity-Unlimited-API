@@ -1,0 +1,24 @@
+kind = "mobile"
+previewPath = "/"
+title = "Freelocity Motion Tracker"
+description = "A mobile Expo app that reads live three-axis accelerometer data from a physical phone and displays motion values for the Freelocity training API."
+version = "1.0.0"
+id = "artifacts/freelocity-mobile"
+router = "expo-domain"
+
+[[services]]
+name = "expo"
+ensurePreviewReachable = "/status"
+paths = [ "/" ]
+localPort = 21585
+
+[services.development]
+run = "pnpm --filter @workspace/freelocity-mobile run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/freelocity-mobile", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/freelocity-mobile", "run", "serve" ]
+
+[services.env]
+PORT = "21585"
+BASE_PATH = "/"

@@ -21,11 +21,12 @@ import type {
 
 import type {
   HealthStatus,
+  SetAnalysisRequest,
   SetAnalysisResult
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
-import type { ErrorType } from '../custom-fetch';
+import type { ErrorType , BodyType } from '../custom-fetch';
 
 type AwaitedInput<T> = PromiseLike<T> | T;
 
@@ -138,17 +139,17 @@ export const getAnalyzeSetUrl = () => {
 }
 
 /**
- * Returns simulated AI feedback for a submitted set
+ * Accepts a raw acceleration batch and returns velocity-integrated coaching feedback
  * @summary Analyze a set
  */
-export const analyzeSet = async ( options?: Parameters<typeof customFetch>[1]): Promise<SetAnalysisResult> => {
+export const analyzeSet = async (setAnalysisRequest: SetAnalysisRequest, options?: Parameters<typeof customFetch>[1]): Promise<SetAnalysisResult> => {
 
   return customFetch<SetAnalysisResult>(getAnalyzeSetUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(setAnalysisRequest)
   }
 );}
 
@@ -157,8 +158,8 @@ export const analyzeSet = async ( options?: Parameters<typeof customFetch>[1]): 
 
 
 export const getAnalyzeSetMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof analyzeSet>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof analyzeSet>>, TError,void, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof analyzeSet>>, TError,{data: BodyType<SetAnalysisRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof analyzeSet>>, TError,{data: BodyType<SetAnalysisRequest>}, TContext> => {
 
 const mutationKey = ['analyzeSet'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
@@ -170,10 +171,10 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof analyzeSet>>, void> = () => {
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof analyzeSet>>, {data: BodyType<SetAnalysisRequest>}> = (props) => {
+          const {data} = props ?? {};
 
-
-          return  analyzeSet(requestOptions)
+          return  analyzeSet(data,requestOptions)
         }
 
 
@@ -184,18 +185,18 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type AnalyzeSetMutationResult = NonNullable<Awaited<ReturnType<typeof analyzeSet>>>
-
+    export type AnalyzeSetMutationBody = BodyType<SetAnalysisRequest>
     export type AnalyzeSetMutationError = ErrorType<unknown>
 
     /**
  * @summary Analyze a set
  */
 export const useAnalyzeSet = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof analyzeSet>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof analyzeSet>>, TError,{data: BodyType<SetAnalysisRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof analyzeSet>>,
         TError,
-        void,
+        {data: BodyType<SetAnalysisRequest>},
         TContext
       > => {
       return useMutation(getAnalyzeSetMutationOptions(options));

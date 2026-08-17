@@ -9,6 +9,36 @@ export interface HealthStatus {
   status: string;
 }
 
+/**
+ * A single three-axis accelerometer reading with a millisecond timestamp
+ */
+export interface AccelerationSample {
+  /** X-axis acceleration in G */
+  x: number;
+  /** Y-axis acceleration in G */
+  y: number;
+  /** Z-axis acceleration in G */
+  z: number;
+  /** Unix timestamp in milliseconds when the sample was captured */
+  timestamp: number;
+}
+
+/**
+ * Exercise setup metadata and the raw sensor batch captured during a set
+ */
+export interface SetAnalysisRequest {
+  /** Name of the exercise (e.g. "Bench Press") */
+  exercise_name: string;
+  /** Load on the bar in kilograms */
+  weight_kg: number;
+  /** Planned rep count for the set */
+  target_reps: number;
+  /** Total sets planned in the workout */
+  total_sets: number;
+  /** Ordered raw acceleration samples captured during the set */
+  samples: AccelerationSample[];
+}
+
 export type SetAnalysisResultStatus = typeof SetAnalysisResultStatus[keyof typeof SetAnalysisResultStatus];
 
 
@@ -16,17 +46,17 @@ export const SetAnalysisResultStatus = {
   success: 'success',
 } as const;
 
-export type SetAnalysisResultAiFeedback = typeof SetAnalysisResultAiFeedback[keyof typeof SetAnalysisResultAiFeedback];
-
-
-export const SetAnalysisResultAiFeedback = {
-  'Perfect_tempo!': 'Perfect tempo!',
-  Too_fast_on_the_way_down: 'Too fast on the way down.',
-  'Struggling,_rack_it': 'Struggling, rack it.',
-} as const;
-
 export interface SetAnalysisResult {
   status: SetAnalysisResultStatus;
-  ai_feedback: SetAnalysisResultAiFeedback;
+  exercise_name: string;
+  /** Mean bar velocity in m/s integrated from the acceleration batch */
+  mean_velocity_ms: number;
+  /** Peak bar velocity in m/s */
+  peak_velocity_ms: number;
+  /** Number of samples processed */
+  sample_count: number;
+  /** Total set duration in seconds */
+  duration_s: number;
+  ai_feedback: string;
 }
 

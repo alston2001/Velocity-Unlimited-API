@@ -5,10 +5,18 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { SetAnalysisResultAiFeedback } from './setAnalysisResultAiFeedback';
 import type { SetAnalysisResultStatus } from './setAnalysisResultStatus';
 
 export interface SetAnalysisResult {
   status: SetAnalysisResultStatus;
-  ai_feedback: SetAnalysisResultAiFeedback;
+  exercise_name: string;
+  /** Mean bar velocity in m/s integrated from the acceleration batch */
+  mean_velocity_ms: number;
+  /** Peak bar velocity in m/s */
+  peak_velocity_ms: number;
+  /** Number of samples processed */
+  sample_count: number;
+  /** Total set duration in seconds */
+  duration_s: number;
+  ai_feedback: string;
 }
