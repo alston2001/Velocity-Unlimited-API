@@ -5,16 +5,6 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-export interface HealthStatus {
-  status: string;
-}
-
-export type SetAnalysisResultStatus = typeof SetAnalysisResultStatus[keyof typeof SetAnalysisResultStatus];
-
-
-export const SetAnalysisResultStatus = {
-  success: 'success',
-} as const;
 
 export type SetAnalysisResultAiFeedback = typeof SetAnalysisResultAiFeedback[keyof typeof SetAnalysisResultAiFeedback];
 
@@ -24,9 +14,3 @@ export const SetAnalysisResultAiFeedback = {
   Too_fast_on_the_way_down: 'Too fast on the way down.',
   'Struggling,_rack_it': 'Struggling, rack it.',
 } as const;
-
-export interface SetAnalysisResult {
-  status: SetAnalysisResultStatus;
-  ai_feedback: SetAnalysisResultAiFeedback;
-}
-

@@ -10,7 +10,35 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: coaching
+    description: Set analysis operations
 paths:
+  /:
+    get:
+      operationId: apiHome
+      tags: [health]
+      summary: API welcome message
+      description: Confirms that the Velocity Unlimited API is live
+      responses:
+        "200":
+          description: API is live
+          content:
+            text/plain:
+              schema:
+                type: string
+  /analyze-set:
+    post:
+      operationId: analyzeSet
+      tags: [coaching]
+      summary: Analyze a set
+      description: Returns simulated AI feedback for a submitted set
+      responses:
+        "200":
+          description: Simulated coaching feedback
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SetAnalysisResult"
   /healthz:
     get:
       operationId: healthCheck
@@ -33,4 +61,19 @@ components:
           type: string
       required:
         - status
+    SetAnalysisResult:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [success]
+        ai_feedback:
+          type: string
+          enum:
+            - Perfect tempo!
+            - Too fast on the way down.
+            - Struggling, rack it.
+      required:
+        - status
+        - ai_feedback
 
