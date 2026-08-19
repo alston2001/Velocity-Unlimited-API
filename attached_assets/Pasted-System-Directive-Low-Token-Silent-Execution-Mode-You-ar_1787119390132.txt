@@ -1,0 +1,79 @@
+System Directive: Low-Token Silent Execution Mode
+You are operating in silent execution mode. Do not output conversational text, code explanations, intros, or summaries. Apply edits directly to target files (`src/lib/concussionTracker.ts`, `src/hooks/useConcussionTracker.ts`, and `freelocity-mobile/app/(tabs)/index.tsx` or new route `freelocity-mobile/app/concussion.tsx`).
+ 
+Task Overview:
+Build a multi-step Concussion Screening Mode that combines front-facing camera pupil/facial analysis, IMU postural sway tracking, and a full 10-question cognitive assessment battery scored by an examiner to generate a preliminary Concussion Likelihood Score.
+ 
+=====================================================================
+1. CONCUSSION ASSESSMENT ENGINE (`src/lib/concussionTracker.ts`)
+=====================================================================
+ 
+1. Pupil Size & Anisocoria Analysis (TS Computer Vision):
+   - Process front-facing camera frame RGBA buffers around eye bounding regions.
+   - Detect pupil edge gradients using intensity thresholding on `Float32Array` buffers to estimate left pupil diameter $d_L$ and right pupil diameter $d_R$ in pixels.
+   - Calculate Anisocoria Ratio:
+     $$\text{Anisocoria \%} = \frac{|d_L - d_R|}{\max(d_L, d_R)} \times 100$$
+   - Score Penalty: Anisocoria $> 10\%$ or bilateral hyper-dilation increases Pupil Score Component (0 to 35 points).
+ 
+2. Postural Sway / Balance Stability Test (IMU Sensor Processing):
+   - Record 10-second accelerometer time-series during a single-leg or tandem balance stance.
+   - Compute root-mean-square (RMS) acceleration variance across $X, Y, Z$ axes:
+     $$\text{Sway}_{\text{RMS}} = \sqrt{\frac{1}{N} \sum (a_{x,i}^2 + a_{y,i}^2 + a_{z,i}^2)}$$
+   - Score Penalty: $\text{Sway}_{\text{RMS}} > 0.4\text{ m/s}^2$ increases Balance Score Component (0 to 35 points).
+ 
+3. Composite Likelihood Score Matrix (0 - 100):
+   $$\text{Total Risk Score} = \text{Pupil Score (0-35)} + \text{Balance Score (0-35)} + \text{Cognitive Penalty (0-30)}$$
+   - Cognitive Penalty Calculation: Each wrong answer out of 10 adds 3 points to the Cognitive Penalty Component:
+     $$\text{Cognitive Penalty} = 30 \times \left(1 - \frac{\text{Correct Answers}}{10}\right)$$
+   - Risk Tiers:
+     - 0 – 25: Low Risk
+     - 26 – 55: Moderate Risk (Professional Review Suggested)
+     - 56 – 100: High Likelihood (Immediate Medical Evaluation Recommended)
+ 
+=====================================================================
+2. CONCUSSION ASSESSMENT FLOW & UI (`freelocity-mobile/app/(tabs)/index.tsx` or `app/concussion.tsx`)
+=====================================================================
+ 
+1. Bottom HUD Launch Button (High-Visibility Design):
+   - Position a large, prominent full-width button fixed near the bottom of the main camera HUD (`app/(tabs)/index.tsx`).
+   - Styling: Solid bright white background (`#FFFFFF`), rounded corners (`borderRadius: 16`), subtle drop shadow, and horizontal layout.
+   - Icon & Text: Red brain drawing/icon (`#FF2A2A` via `Ionicons` or SVG) paired with bold black text (`#000000`): **"CONCUSSION TEST"**.
+   - Action: Tapping this button launches the guided Concussion Assessment Modal.
+ 
+2. Step 1: Facial Photo & Pupil Scan
+   - Display a front-camera viewfinder with eye alignment guide ovals.
+   - User taps "Capture & Analyze Eyes".
+   - App runs pupil symmetry calculation, displaying estimated pupil diameters ($d_L, d_R$) and asymmetry percentage.
+ 
+3. Step 2: 10-Second Balance Test
+   - Audio/Visual countdown timer (10 seconds).
+   - Instructs user: *"Hold phone against chest and stand on non-dominant foot"*.
+   - Samples IMU at 60 Hz to compute postural sway variance.
+ 
+4. Step 3: Full 10-Question Examiner Cognitive SAC Quiz
+   - Administer all 10 standard SAC cognitive orientation questions sequentially across 3 structured domains:
+     - Orientation Domain (4 Questions):
+       1. "What month is it?"
+       2. "What day of the week is it?"
+       3. "What year is it?"
+       4. "What is your current location?"
+     - Concentration Domain (3 Questions):
+       5. "Months of the year in reverse order starting from December"
+       6. "Count backwards from 100 by 7s (100, 93, 86...)"
+       7. "Repeat these 5 words backwards: Apple, Chair, River, Shirt, Cloud"
+     - Memory & Recall Domain (3 Questions):
+       8. "What team/opponent did you last play?"
+       9. "What period/quarter is it currently?"
+       10. "What was the last thing you ate before this event?"
+   - UI presents each question with two large examiner tap targets: `[Right Answer]` and `[Wrong Answer]`.
+   - Calculate final cognitive score out of 10 ($1\text{ point per correct answer}$).
+ 
+5. Step 4: Final Likelihood Report Screen
+   - Renders a high-contrast report card:
+     - Overall Score Breakdown Gauge (0 - 100).
+     - Individual Metric Cards: Pupil Asymmetry %, Balance Sway RMS, Cognitive Score (X/10 Correct).
+     - Risk Classification Badge (`LOW`, `MODERATE`, `HIGH`).
+     - Prominent Medical Disclaimer Banner: *"Screening tool only. Not a diagnostic medical device. Results must be reviewed by a certified healthcare professional or athletic trainer."*
+     - Action Buttons: `[Export JSON Report]` and `[Return to Camera]`.
+ 
+Apply all edits directly to target files. Execute silently.
