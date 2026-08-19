@@ -15,6 +15,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import { useVbtTracker } from '@/src/hooks/useVbtTracker';
+import type { CalibrationTarget } from '@/src/lib/vbtTracker';
 
 const NEON = '#00FF88';
 const IMU_DT = 0.0166;
@@ -32,6 +33,7 @@ export type RepData = {
   peakVelocity: number;
   peakAccel: number;
   durationSec: number;
+  velocityLossPercent: number;
 };
 
 function formatNumber(value: number, digits = 2) {
@@ -186,6 +188,8 @@ export default function MotionTrackerScreen() {
 
   const [trackingMode, setTrackingMode] = useState<TrackingMode>('mounted');
   const [equipment, setEquipment] = useState<EquipmentType>('cable');
+  const [calibrationTarget, setCalibrationTarget] =
+    useState<CalibrationTarget>('plate');
   const [isSetActive, setIsSetActive] = useState(false);
   const [sensorAvailable, setSensorAvailable] = useState<boolean | null>(null);
   const [liveAccel, setLiveAccel] = useState(0);
@@ -235,6 +239,15 @@ export default function MotionTrackerScreen() {
         peakVelocity,
         peakAccel,
         durationSec,
+        velocityLossPercent:
+          meanVelocity > 0 && current[0]?.meanVelocity
+            ? Math.max(
+                0,
+                ((current[0].meanVelocity - meanVelocity) /
+                  current[0].meanVelocity) *
+                  100,
+              )
+            : 0,
       },
     ]);
     clearActiveRep();
@@ -268,7 +281,11 @@ export default function MotionTrackerScreen() {
     Accelerometer.setUpdateInterval(1000 / MOUNTED_HZ);
     const subscription = Accelerometer.addListener((data) => {
       const accelY = data.y * 9.81;
-      const trackerState = vbtTracker.update(0, accelY, IMU_DT);
+      const trackerState = vbtTracker.update(0, accelY, IMU_DT, {
+        x: data.x * 9.81,
+        y: data.y * 9.81,
+        z: data.z * 9.81,
+      });
       const upwardVelocity = Math.max(0, trackerState.velocity);
       setLiveAccel(accelY);
 
@@ -326,6 +343,19 @@ export default function MotionTrackerScreen() {
     setShowFeedback(false);
     setIsSetActive(false);
   }, [clearActiveRep, vbtTracker.resetTracker]);
+
+  const calibrateReference = useCallback(() => {
+    // The reticle represents a 300 px reference span in the camera HUD. A
+    // native frame processor can replace this with its detected span later.
+    vbtTracker.calibrate(300, calibrationTarget);
+  }, [calibrationTarget, vbtTracker.calibrate]);
+
+  const calibrationTargetLabel =
+    calibrationTarget === 'plate'
+      ? '450mm Plate'
+      : calibrationTarget === 'sleeve'
+        ? '50mm Sleeve'
+        : '28mm Shaft';
 
   if (!permission) {
     return (
@@ -386,6 +416,47 @@ export default function MotionTrackerScreen() {
               style={[styles.selectorPill, segmentedButton(trackingMode === 'tripod', colors)]}
             >
               <Text style={styles.selectorText}>Tripod / Off-Device</Text>
+            </Pressable>
+          </View>
+
+          <Text style={styles.selectorLabel}>CALIBRATION TARGET</Text>
+          <View style={styles.selectorRow}>
+            {(
+              [
+                ['plate', '450mm Plate'],
+                ['sleeve', '50mm Sleeve'],
+                ['shaft', '28mm Shaft'],
+              ] as const
+            ).map(([target, label]) => (
+              <Pressable
+                key={target}
+                onPress={() => setCalibrationTarget(target)}
+                style={[
+                  styles.selectorPill,
+                  segmentedButton(calibrationTarget === target, colors),
+                ]}
+              >
+                <Text style={styles.selectorText}>{label}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <View style={styles.calibrationRow}>
+            <Text style={styles.calibrationStatus}>
+              {vbtTracker.isCalibrated
+                ? `${calibrationTargetLabel} calibrated · tilt ${formatNumber(vbtTracker.tiltAngleDeg, 1)}°`
+                : 'Reference target not calibrated'}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={calibrateReference}
+              style={[
+                styles.calibrationButton,
+                { borderColor: vbtTracker.isCalibrated ? NEON : colors.primary },
+              ]}
+            >
+              <Text style={styles.calibrationButtonText}>
+                {vbtTracker.isCalibrated ? 'RECALIBRATE' : 'CALIBRATE'}
+              </Text>
             </Pressable>
           </View>
 
@@ -521,6 +592,30 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
   },
   selectorText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700' },
+  calibrationRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  calibrationStatus: {
+    color: 'rgba(255,255,255,0.58)',
+    flex: 1,
+    fontSize: 10,
+  },
+  calibrationButton: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+  },
+  calibrationButtonText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
   telemetry: {
     alignItems: 'center',
     alignSelf: 'stretch',
