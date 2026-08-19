@@ -1,0 +1,158 @@
+System Directive: Low-Token Silent Execution Mode
+
+You are operating in silent execution mode. Do not output conversational text, code explanations, intros, or summaries. Apply edits directly to target files (`src/lib/concussionTracker.ts`, `src/hooks/useConcussionTracker.ts`, and `freelocity-mobile/app/(tabs)/index.tsx` or new route `freelocity-mobile/app/concussion.tsx`).
+ 
+Task Overview:
+
+Update the Concussion Assessment Mode to replace JSON exports with a timestamped, app-signed SMS text message export using React Native `Share` or `expo-sms`.
+ 
+=====================================================================
+
+1. TEXT MESSAGE EXPORT ENGINE (`src/lib/concussionTracker.ts`)
+
+=====================================================================
+ 
+1. Timestamped & App-Signed Payload Generator:
+
+   Implement `generateSmsReportPayload(pupilAsymmetry: number, cognitiveScore: number, totalRisk: number, riskLevel: string)`:
+
+   - Generate ISO timestamp at time of execution (`new Date().toLocaleString()`).
+
+   - Generate a unique verification session hash (`FREELOCITY-VERIFIED-#` + random hex/timestamp derivative).
+
+   - Format plain-text message string ready for SMS or system sheet sharing:
+ 
+   ```text
+
+   🚨 FREELOCITY CONCUSSION ASSESSMENT REPORT
+
+   ------------------------------------------
+
+   Timestamp: [MM/DD/YYYY, HH:MM:SS AM/PM]
+
+   Session ID: FREELOCITY-VERIFIED-A8F92C
+ 
+   SUMMARY METRICS:
+
+   - Pupil Asymmetry: [X.X]%
+
+   - Cognitive SAC Score: [X]/10 Correct
+
+   - Composite Risk Score: [X]/100
+
+   - Risk Assessment: [LOW / MODERATE / HIGH RISK]
+ 
+   ------------------------------------------
+
+   DISCLAIMER: Screening tool only. Not a medical diagnosis. Results must be reviewed immediately by a certified healthcare professional or athletic trainer.
+ 
+   App Signature: Freelocity VBT Engine v1.0 (Authenticated Session)
+ 
+System Directive: Low-Token Silent Execution Mode
+
+You are operating in silent execution mode. Do not output conversational text, code explanations, intros, or summaries. Apply edits directly to target files (`src/lib/security.ts`, `src/lib/vbtTracker.ts`, `src/lib/concussionTracker.ts`, `freelocity-mobile/app/(tabs)/index.tsx`, and `app/concussion.tsx`).
+ 
+Task Overview:
+
+Hardening Freelocity Mobile for security compliance and competition judging. Implement local API key obfuscation, ephemeral zero-disk camera buffer memory handling, SHA-256 session payload signing, strict AI safety guardrails, and key feature enhancements targeting the Responsible Use of AI, Concussion Innovation, and Health/Fitness Technology awards.
+ 
+=====================================================================
+
+1. SECURITY, PRIVACY & DATA PROTECTION (`src/lib/security.ts`)
+
+=====================================================================
+ 
+1. Ephemeral Frame Buffer Pipeline (HIPAA / Privacy-First):
+
+   - Ensure all camera frame pixel buffers (`Uint8ClampedArray`, `Float32Array`) processed during VBT optical flow and Pupil scanning exist purely in volatile RAM memory.
+
+   - Enforce immediate zero-fill garbage collection (`buffer.fill(0)`) upon frame completion.
+
+   - Strictly prohibit writing facial, eye, or raw video camera data to persistent storage (`AsyncStorage`, FileSystem, or cloud endpoints).
+ 
+2. Cryptographic Payload Signer:
+
+   - Implement `signAssessmentReport(payload: string): string`:
+
+     Generate an HMAC/SHA-256 digital signature over the timestamped concussion report string using an app-bound secret key.
+
+   - Append `[VERIFIED SIGNATURE: SHA256-HEX...]` to the final SMS text export to prevent report tampering on the sideline.
+ 
+3. Secure API & Key Handling:
+
+   - Obfuscate and sanitize API key handling for Anthropic Claude (`process.env.EXPO_PUBLIC_ANTHROPIC_API_KEY`).
+
+   - Implement rate-limiting (max 3 AI requests per minute) and request timeout controls (5 seconds max) to prevent API exploitation.
+ 
+=====================================================================
+
+2. RESPONSIBLE AI AWARD PILARS (Safety & Ethics Guardrails)
+
+=====================================================================
+ 
+1. Data Minimization in Prompts:
+
+   - When sending set data to Claude AI, send ONLY anonymized numeric arrays (`rep_count`, `mean_velocities`, `peak_accelerations`, `velocity_loss_pct`). Never transmit PII, location data, or facial metrics to LLM endpoints.
+ 
+2. Diagnostic Non-Hallucination System Prompt:
+
+   - Enforce system prompt boundaries on Claude requests: *"You are a strength and conditioning velocity analysis engine. Provide performance analysis on movement speed only. NEVER provide medical diagnoses, treatment advice, or injury prognoses."*
+ 
+3. Human-in-the-Loop Architecture:
+
+   - Explicitly enforce human examiner oversight: The cognitive assessment requires a human examiner to evaluate and tap `O` inputs, keeping AI as an assistive screening tool rather than an autonomous decision-maker.
+ 
+=====================================================================
+
+3. CONCUSSION SAFETY AWARD PILLARS (Clinical Protocol Alignment)
+
+=====================================================================
+ 
+1. SCAT6 / SAC Alignment:
+
+   - Structure the 10-question cognitive assessment directly against the Standardized Assessment of Concussion (SAC) cognitive orientation battery.
+
+   - Display clear domain score breakdowns on the final report: `Orientation (4 Qs)`, `Concentration (3 Qs)`, and `Memory/Situational (3 Qs)`.
+ 
+2. Dual-Biometric Screening Engine:
+
+   - Combine Computer Vision Anisocoria Pupil Analysis (0 - 50 pts) with Cognitive SAC performance (0 - 50 pts).
+
+   - Display a prominent, legally compliant Medical Disclaimer Banner on all concussion outputs: *"Screening tool only. Not a medical diagnostic device. Requires immediate clinical evaluation by a licensed healthcare professional."*
+ 
+=====================================================================
+
+4. HEALTH & FITNESS AWARD PILLARS (Accessibility & Innovation)
+
+=====================================================================
+ 
+1. Zero-Hardware Kinematic Motion Engine:
+
+   - Highlight zero-cost accessibility by running real-time 60 FPS velocity tracking via phone camera and accelerometer sensor fusion.
+
+   - Adaptive Kalman Filter with IMU tilt-rectification and dynamic noise scaling ($R_k$) to eliminate the need for $500+ hardware linear position transducers.
+ 
+2. Live Fatigue & Velocity Loss Detection:
+
+   - Real-time HUD highlight displaying % Velocity Loss relative to Rep 1 (`#00FF88` for $< 10\%$ loss, `#FFB000` for $10-20\%$, `#FF2A2A` for $> 20\%$ loss).
+
+   - Instant visual indicator telling lifters when to terminate sets to maximize strength gains while minimizing neuromuscular fatigue.
+ 
+=====================================================================
+
+5. UI CONTROLS & REPORT SCREEN INTEGRATION
+
+=====================================================================
+ 
+1. Interface Controls:
+
+   - Retain large white bottom launch button (`#FFFFFF`, `borderRadius: 16`) with red brain label (`#FF2A2A`) and bold text **"CONCUSSION TEST"**.
+
+   - Use plain text/styled `O` icons for tap targets and bold `X` text for exit controls (no missing `X[]` vector icon glyphs).
+ 
+2. Final Signed SMS Export:
+
+   - Tapping `[O Send Text Report]` generates the timestamped, SHA-256 cryptographically signed text payload and opens the native device SMS interface.
+ 
+Apply all edits directly to target files. Execute silently.
+ 

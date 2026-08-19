@@ -1,3 +1,5 @@
+import { scrubFrameBuffer } from '@/src/lib/security';
+
 export type CalibrationTarget = 'plate' | 'sleeve' | 'shaft';
 
 export type GravityVector = {
@@ -75,7 +77,10 @@ export function detectCornerKeypoints(
   threshold = 18,
 ): Keypoint[] {
   const points: Keypoint[] = [];
-  if (width < 5 || height < 5 || rgba.length < width * height * 4) return points;
+  if (width < 5 || height < 5 || rgba.length < width * height * 4) {
+    scrubFrameBuffer(rgba);
+    return points;
+  }
 
   for (let gy = 2; gy < height - 2; gy += gridSize) {
     for (let gx = 2; gx < width - 2; gx += gridSize) {
@@ -118,6 +123,7 @@ export function detectCornerKeypoints(
     }
   }
 
+  scrubFrameBuffer(rgba);
   return points;
 }
 
@@ -233,6 +239,8 @@ export function trackVerticalDisplacement(
       });
     }
   }
+  scrubFrameBuffer(previous);
+  scrubFrameBuffer(current);
   return vectors;
 }
 

@@ -4,6 +4,7 @@ import {
   finishBalance,
   type BalanceSample,
   type BalanceResult,
+  type CognitiveAnswer,
   type ConcussionAssessment,
   type PupilAnalysis,
 } from '@/src/lib/concussionTracker';
@@ -11,7 +12,7 @@ import {
 export function useConcussionTracker() {
   const [pupil, setPupil] = useState<PupilAnalysis | null>(null);
   const [balance, setBalance] = useState<BalanceResult | null>(null);
-  const [answers, setAnswers] = useState<boolean[]>([]);
+  const [answers, setAnswers] = useState<CognitiveAnswer[]>([]);
   const balanceSamples = useRef<BalanceSample[]>([]);
 
   const recordPupilAnalysis = useCallback((analysis: PupilAnalysis) => {
@@ -33,9 +34,12 @@ export function useConcussionTracker() {
     return result;
   }, []);
 
-  const recordAnswer = useCallback((correct: boolean) => {
-    setAnswers((current) => [...current, correct]);
-  }, []);
+  const recordAnswer = useCallback(
+    (correct: boolean, domain: CognitiveAnswer['domain']) => {
+      setAnswers((current) => [...current, { correct, domain }]);
+    },
+    [],
+  );
 
   const reset = useCallback(() => {
     balanceSamples.current = [];
@@ -45,7 +49,7 @@ export function useConcussionTracker() {
   }, []);
 
   const assessment = useMemo<ConcussionAssessment>(
-    () => buildAssessment(pupil, balance, answers.filter(Boolean).length),
+    () => buildAssessment(pupil, balance, answers),
     [answers, balance, pupil],
   );
 

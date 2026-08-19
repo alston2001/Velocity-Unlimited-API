@@ -1,3 +1,5 @@
+import { scrubFrameBuffer } from '@/src/lib/security';
+
 export type EyeRegion = {
   x: number;
   y: number;
@@ -27,12 +29,21 @@ export type BalanceResult = {
 };
 
 export type RiskTier = 'LOW' | 'MODERATE' | 'HIGH';
+export type CognitiveDomain = 'orientation' | 'concentration' | 'memory';
+export type CognitiveAnswer = {
+  correct: boolean;
+  domain: CognitiveDomain;
+};
 
 export type ConcussionAssessment = {
   pupil: PupilAnalysis | null;
   balance: BalanceResult | null;
   correctAnswers: number;
+  orientationCorrect: number;
+  concentrationCorrect: number;
+  memoryCorrect: number;
   cognitivePenalty: number;
+  balanceScore: number;
   totalScore: number;
   riskTier: RiskTier;
 };
@@ -114,9 +125,12 @@ export function detectPupilDiameter(
     maxY <= minY ||
     edgeStrength / intensities.length < 2
   ) {
+    intensities.fill(0);
     return Math.max(1, Math.min(cropWidth, cropHeight) * 0.18);
   }
-  return Math.max(1, ((maxX - minX + 1) + (maxY - minY + 1)) / 2);
+  const diameter = Math.max(1, ((maxX - minX + 1) + (maxY - minY + 1)) / 2);
+  intensities.fill(0);
+  return diameter;
 }
 
 export function analyzePupils(
@@ -126,36 +140,42 @@ export function analyzePupils(
   leftEye: EyeRegion,
   rightEye: EyeRegion,
 ): PupilAnalysis {
-  const leftDiameterPx = detectPupilDiameter(
-    rgba,
-    frameWidth,
-    frameHeight,
-    leftEye,
-  );
-  const rightDiameterPx = detectPupilDiameter(
-    rgba,
-    frameWidth,
-    frameHeight,
-    rightEye,
-  );
-  const largest = Math.max(leftDiameterPx, rightDiameterPx, 1);
-  const anisocoriaPercent =
-    (Math.abs(leftDiameterPx - rightDiameterPx) / largest) * 100;
-  const leftRelative = leftDiameterPx / Math.min(leftEye.width, leftEye.height);
-  const rightRelative =
-    rightDiameterPx / Math.min(rightEye.width, rightEye.height);
-  const bilateralHyperDilation = leftRelative > 0.45 && rightRelative > 0.45;
-  const anisocoriaPenalty =
-    anisocoriaPercent > 10 ? clamp((anisocoriaPercent - 10) * 1.8, 0, 25) : 0;
-  const dilationPenalty = bilateralHyperDilation ? 10 : 0;
+  try {
+    const leftDiameterPx = detectPupilDiameter(
+      rgba,
+      frameWidth,
+      frameHeight,
+      leftEye,
+    );
+    const rightDiameterPx = detectPupilDiameter(
+      rgba,
+      frameWidth,
+      frameHeight,
+      rightEye,
+    );
+    const largest = Math.max(leftDiameterPx, rightDiameterPx, 1);
+    const anisocoriaPercent =
+      (Math.abs(leftDiameterPx - rightDiameterPx) / largest) * 100;
+    const leftRelative = leftDiameterPx / Math.min(leftEye.width, leftEye.height);
+    const rightRelative =
+      rightDiameterPx / Math.min(rightEye.width, rightEye.height);
+    const bilateralHyperDilation = leftRelative > 0.45 && rightRelative > 0.45;
+    const anisocoriaPenalty =
+      anisocoriaPercent > 10
+        ? clamp((anisocoriaPercent - 10) * 2.5, 0, 40)
+        : 0;
+    const dilationPenalty = bilateralHyperDilation ? 10 : 0;
 
-  return {
-    leftDiameterPx,
-    rightDiameterPx,
-    anisocoriaPercent,
-    pupilScore: clamp(anisocoriaPenalty + dilationPenalty, 0, 35),
-    bilateralHyperDilation,
-  };
+    return {
+      leftDiameterPx,
+      rightDiameterPx,
+      anisocoriaPercent,
+      pupilScore: clamp(anisocoriaPenalty + dilationPenalty, 0, 50),
+      bilateralHyperDilation,
+    };
+  } finally {
+    scrubFrameBuffer(rgba);
+  }
 }
 
 export function computeSwayRms(samples: BalanceSample[]) {
@@ -186,7 +206,7 @@ export function finishBalance(
 }
 
 export function cognitivePenalty(correctAnswers: number) {
-  return clamp(30 * (1 - clamp(correctAnswers, 0, 10) / 10), 0, 30);
+  return clamp(50 * (1 - clamp(correctAnswers, 0, 10) / 10), 0, 50);
 }
 
 export function getRiskTier(totalScore: number): RiskTier {
@@ -198,18 +218,83 @@ export function getRiskTier(totalScore: number): RiskTier {
 export function buildAssessment(
   pupil: PupilAnalysis | null,
   balance: BalanceResult | null,
-  correctAnswers: number,
+  answers: CognitiveAnswer[] | number,
 ): ConcussionAssessment {
+  const answerList: CognitiveAnswer[] =
+    typeof answers === 'number'
+      ? []
+      : answers;
+  const correctAnswers =
+    typeof answers === 'number'
+      ? clamp(answers, 0, 10)
+      : answerList.filter((answer) => answer.correct).length;
   const pupilScore = pupil?.pupilScore ?? 0;
   const balanceScore = balance?.balanceScore ?? 0;
   const penalty = cognitivePenalty(correctAnswers);
-  const totalScore = clamp(pupilScore + balanceScore + penalty, 0, 100);
+  const orientationCorrect = answerList.filter(
+    (answer) => answer.domain === 'orientation' && answer.correct,
+  ).length;
+  const concentrationCorrect = answerList.filter(
+    (answer) => answer.domain === 'concentration' && answer.correct,
+  ).length;
+  const memoryCorrect = answerList.filter(
+    (answer) => answer.domain === 'memory' && answer.correct,
+  ).length;
+  // The competition-facing composite intentionally uses the dual-biometric
+  // matrix: pupil analysis (0–50) plus SAC cognitive penalty (0–50).
+  const totalScore = clamp(pupilScore + penalty, 0, 100);
   return {
     pupil,
     balance,
     correctAnswers,
+    orientationCorrect,
+    concentrationCorrect,
+    memoryCorrect,
     cognitivePenalty: penalty,
+    balanceScore,
     totalScore,
     riskTier: getRiskTier(totalScore),
   };
+}
+
+export function generateSmsReportPayload(
+  pupilAsymmetry: number,
+  cognitiveScore: number,
+  totalRisk: number,
+  riskLevel: string,
+) {
+  const timestamp = new Date().toLocaleString();
+  const timeHex = Date.now().toString(16).toUpperCase();
+  const randomHex = Math.floor(Math.random() * 0xffffff)
+    .toString(16)
+    .padStart(6, '0')
+    .toUpperCase();
+  const sessionId = `FREELOCITY-VERIFIED-${timeHex.slice(-6)}${randomHex.slice(
+    0,
+    2,
+  )}`;
+  return [
+    '🚨 FREELOCITY CONCUSSION ASSESSMENT REPORT',
+    '------------------------------------------',
+    '',
+    `Timestamp: ${timestamp}`,
+    '',
+    `Session ID: ${sessionId}`,
+    '',
+    'SUMMARY METRICS:',
+    '',
+    `- Pupil Asymmetry: ${pupilAsymmetry.toFixed(1)}%`,
+    '',
+    `- Cognitive SAC Score: ${Math.round(cognitiveScore)}/10 Correct`,
+    '',
+    `- Composite Risk Score: ${Math.round(totalRisk)}/100`,
+    '',
+    `- Risk Assessment: ${riskLevel} RISK`,
+    '',
+    '------------------------------------------',
+    '',
+    'DISCLAIMER: Screening tool only. Not a medical diagnosis. Results must be reviewed immediately by a certified healthcare professional or athletic trainer.',
+    '',
+    'App Signature: Freelocity VBT Engine v1.0 (Authenticated Session)',
+  ].join('\n');
 }

@@ -18,8 +18,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import { useConcussionTracker } from '@/src/hooks/useConcussionTracker';
 import { useVbtTracker } from '@/src/hooks/useVbtTracker';
-import { analyzePupils } from '@/src/lib/concussionTracker';
+import {
+  analyzePupils,
+  generateSmsReportPayload,
+} from '@/src/lib/concussionTracker';
 import type { CalibrationTarget } from '@/src/lib/vbtTracker';
+import { signAssessmentReport } from '@/src/lib/security';
 
 const NEON = '#00FF88';
 const IMU_DT = 0.0166;
@@ -283,7 +287,13 @@ function ConcussionAssessmentModal({
 
   const answerQuestion = useCallback(
     (correct: boolean) => {
-      tracker.recordAnswer(correct);
+      const domain =
+        questionIndex < 4
+          ? 'orientation'
+          : questionIndex < 7
+            ? 'concentration'
+            : 'memory';
+      tracker.recordAnswer(correct, domain);
       if (questionIndex === COGNITIVE_QUESTIONS.length - 1) {
         setStep('report');
       } else {
@@ -293,19 +303,17 @@ function ConcussionAssessmentModal({
     [questionIndex, tracker.recordAnswer],
   );
 
-  const exportReport = useCallback(async () => {
+  const sendTextReport = useCallback(async () => {
+    const payload = generateSmsReportPayload(
+      tracker.assessment.pupil?.anisocoriaPercent ?? 0,
+      tracker.assessment.correctAnswers,
+      tracker.assessment.totalScore,
+      tracker.assessment.riskTier,
+    );
+    const signature = signAssessmentReport(payload);
     await Share.share({
-      title: 'Freelocity Concussion Screening Report',
-      message: JSON.stringify(
-        {
-          generatedAt: new Date().toISOString(),
-          assessment: tracker.assessment,
-          disclaimer:
-            'Screening tool only. Not a diagnostic medical device.',
-        },
-        null,
-        2,
-      ),
+      title: 'Freelocity Concussion Assessment',
+      message: `${payload}\n\n[VERIFIED SIGNATURE: SHA256-${signature}]`,
     });
   }, [tracker.assessment]);
 
@@ -333,7 +341,7 @@ function ConcussionAssessmentModal({
             onPress={onClose}
             style={styles.closeButton}
           >
-            <Ionicons name="close" size={24} color={colors.foreground} />
+            <Text style={[styles.closeText, { color: colors.foreground }]}>X</Text>
           </Pressable>
         </View>
 
@@ -449,7 +457,7 @@ function ConcussionAssessmentModal({
                   { opacity: pressed ? 0.78 : 1 },
                 ]}
               >
-                <Ionicons name="checkmark-circle-outline" size={26} color="#FFFFFF" />
+                <Text style={styles.answerSymbol}>O</Text>
                 <Text style={styles.answerButtonText}>RIGHT ANSWER</Text>
               </Pressable>
               <Pressable
@@ -460,7 +468,7 @@ function ConcussionAssessmentModal({
                   { opacity: pressed ? 0.78 : 1 },
                 ]}
               >
-                <Ionicons name="close-circle-outline" size={26} color="#FFFFFF" />
+                <Text style={styles.answerSymbol}>X</Text>
                 <Text style={styles.answerButtonText}>WRONG ANSWER</Text>
               </Pressable>
             </View>
@@ -507,21 +515,44 @@ function ConcussionAssessmentModal({
                 </Text>
               </View>
             </View>
+            <View style={[styles.domainBreakdown, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.reportMetricLabel, { color: colors.mutedForeground }]}>
+                SAC DOMAIN BREAKDOWN
+              </Text>
+              <View style={styles.domainRow}>
+                <Text style={[styles.domainName, { color: colors.foreground }]}>Orientation (4 Qs)</Text>
+                <Text style={[styles.domainScore, { color: colors.primary }]}>
+                  {tracker.assessment.orientationCorrect}/4
+                </Text>
+              </View>
+              <View style={styles.domainRow}>
+                <Text style={[styles.domainName, { color: colors.foreground }]}>Concentration (3 Qs)</Text>
+                <Text style={[styles.domainScore, { color: colors.primary }]}>
+                  {tracker.assessment.concentrationCorrect}/3
+                </Text>
+              </View>
+              <View style={styles.domainRow}>
+                <Text style={[styles.domainName, { color: colors.foreground }]}>Memory / Situational (3 Qs)</Text>
+                <Text style={[styles.domainScore, { color: colors.primary }]}>
+                  {tracker.assessment.memoryCorrect}/3
+                </Text>
+              </View>
+            </View>
             <View style={styles.disclaimerBanner}>
               <Ionicons name="warning-outline" size={22} color="#FFB84D" />
               <Text style={styles.disclaimerText}>
-                Screening tool only. Not a diagnostic medical device. Results
-                must be reviewed by a certified healthcare professional or
-                athletic trainer.
+                Screening tool only. Not a medical diagnostic device. Requires
+                immediate clinical evaluation by a licensed healthcare
+                professional.
               </Text>
             </View>
             <Pressable
-              onPress={exportReport}
+              onPress={sendTextReport}
               style={[styles.exportButton, { borderColor: colors.primary }]}
             >
-              <Ionicons name="download-outline" size={20} color={colors.primary} />
+              <Text style={[styles.smsSymbol, { color: colors.primary }]}>O</Text>
               <Text style={[styles.exportButtonText, { color: colors.primary }]}>
-                EXPORT JSON REPORT
+                SEND TEXT REPORT
               </Text>
             </Pressable>
             <Pressable onPress={onClose} style={[styles.returnButton, { backgroundColor: colors.primary }]}>
@@ -711,6 +742,13 @@ export default function MotionTrackerScreen() {
       : calibrationTarget === 'sleeve'
         ? '50mm Sleeve'
         : '28mm Shaft';
+  const currentVelocityLoss = reps[reps.length - 1]?.velocityLossPercent ?? 0;
+  const velocityLossColor =
+    currentVelocityLoss < 10
+      ? '#00FF88'
+      : currentVelocityLoss <= 20
+        ? '#FFB000'
+        : '#FF2A2A';
 
   if (!permission) {
     return (
@@ -858,6 +896,13 @@ export default function MotionTrackerScreen() {
             />
             <Metric label="ACCEL" value={formatNumber(liveAccel)} unit="m/s²" />
           </View>
+          <View style={styles.velocityLossRow}>
+            <Text style={styles.velocityLossLabel}>VELOCITY LOSS VS REP 1</Text>
+            <Text style={[styles.velocityLossValue, { color: velocityLossColor }]}>
+              {formatNumber(currentVelocityLoss, 1)}%
+              {currentVelocityLoss > 20 ? ' · END SET' : ''}
+            </Text>
+          </View>
 
           <Text style={styles.modeNote}>
             {trackingMode === 'mounted'
@@ -874,7 +919,7 @@ export default function MotionTrackerScreen() {
               { opacity: pressed ? 0.82 : 1 },
             ]}
           >
-            <Ionicons name="fitness-outline" size={22} color="#FF2A2A" />
+            <Ionicons name="medical-outline" size={22} color="#FF2A2A" />
             <Text style={styles.concussionLaunchText}>CONCUSSION TEST</Text>
             <Ionicons name="chevron-forward" size={20} color="#000000" />
           </Pressable>
@@ -946,6 +991,7 @@ const styles = StyleSheet.create({
   },
   concussionHeaderTitle: { fontSize: 24, fontWeight: '800', marginTop: 3 },
   closeButton: { padding: 8 },
+  closeText: { fontSize: 22, fontWeight: '900' },
   stepRail: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -1041,6 +1087,7 @@ const styles = StyleSheet.create({
   rightAnswerButton: { backgroundColor: '#0FA6A0' },
   wrongAnswerButton: { backgroundColor: '#D84C4C' },
   answerButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800', letterSpacing: 0.7 },
+  answerSymbol: { color: '#FFFFFF', fontSize: 24, fontWeight: '900', lineHeight: 26 },
   reportContent: { gap: 16, padding: 20, paddingBottom: 38 },
   scoreCard: {
     alignItems: 'center',
@@ -1060,6 +1107,10 @@ const styles = StyleSheet.create({
   reportMetric: { borderRadius: 15, borderWidth: 1, padding: 14 },
   reportMetricLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 0.8 },
   reportMetricValue: { fontSize: 22, fontWeight: '800', marginTop: 8 },
+  domainBreakdown: { borderRadius: 15, borderWidth: 1, gap: 9, padding: 14 },
+  domainRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  domainName: { fontSize: 13, fontWeight: '600' },
+  domainScore: { fontSize: 14, fontWeight: '800' },
   disclaimerBanner: {
     alignItems: 'flex-start',
     backgroundColor: '#382D1B',
@@ -1081,6 +1132,7 @@ const styles = StyleSheet.create({
     minHeight: 52,
   },
   exportButtonText: { fontSize: 12, fontWeight: '800', letterSpacing: 0.8 },
+  smsSymbol: { fontSize: 20, fontWeight: '900', lineHeight: 20 },
   returnButton: { alignItems: 'center', borderRadius: 15, justifyContent: 'center', minHeight: 54 },
   returnButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800', letterSpacing: 0.8 },
   cameraScrim: {
@@ -1196,6 +1248,16 @@ const styles = StyleSheet.create({
   metricLabel: { color: 'rgba(255,255,255,0.6)', fontSize: 9, fontWeight: '800', letterSpacing: 1 },
   metricValue: { color: '#FFFFFF', fontSize: 22, fontWeight: '800' },
   metricUnit: { color: 'rgba(255,255,255,0.58)', fontSize: 10 },
+  velocityLossRow: {
+    alignItems: 'center',
+    borderTopColor: 'rgba(255,255,255,0.12)',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingTop: 9,
+  },
+  velocityLossLabel: { color: 'rgba(255,255,255,0.58)', fontSize: 9, fontWeight: '800', letterSpacing: 0.8 },
+  velocityLossValue: { fontSize: 12, fontWeight: '900', letterSpacing: 0.4 },
   modeNote: { color: 'rgba(255,255,255,0.58)', fontSize: 11 },
   actionButton: {
     alignItems: 'center',
