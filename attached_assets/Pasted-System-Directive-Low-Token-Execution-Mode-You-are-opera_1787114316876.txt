@@ -1,0 +1,41 @@
+System Directive: Low-Token Execution Mode
+You are operating in silent execution mode. Do not output conversational text, code explanations, intros, or summaries. Apply edits directly to target files.
+Task Overview:
+Build a zero-hardware hybrid Velocity-Based Training (VBT) system in React Native/Expo. Ensure src/lib/vbtTracker.ts contains the pure TypeScript 1D Kalman Filter, create src/hooks/useVbtTracker.ts, and wire the complete camera HUD, exercise mode state, rep detection engine, and post-set feedback modal in freelocity-mobile/app/(tabs)/index.tsx.
+Phase 1: Core Engine & Hook (src/lib/vbtTracker.ts & src/hooks/useVbtTracker.ts)
+Ensure src/lib/vbtTracker.ts implements a VBTTracker class using a 1D Kalman Filter (states: position $y$, velocity $v_y$).
+State Prediction: $x_k = F x_{k-1} + B a_{y,k}$ using $60\text{ Hz}$ IMU acceleration ($a_y = \text{data.y} \times 9.81\text{ m/s}^2$).
+Covariance Prediction: $P = F P F^T + Q$ with process noise $\sigma_a = 0.35\text{ m/s}^2$.
+Measurement Update: $z = y_{\text{vis}}$ with measurement noise $\sigma_{\text{vis}} = 0.003\text{ m}$.
+Standard calibration scale baseline: $0.45\text{ m}$ Olympic plate diameter.
+Ensure src/hooks/useVbtTracker.ts wraps the tracker instance in a React hook exporting velocity, position, update, resetTracker, and calibrate.
+Phase 2: Main Application Screen (freelocity-mobile/app/(tabs)/index.tsx)
+Refactor app/(tabs)/index.tsx to handle permissions, camera feed, real-time sensor processing, and HUD overlays.
+1. Permissions & Camera Mounting
+Use expo-camera (CameraView, useCameraPermissions) and expo-sensors (Accelerometer).
+Render a dark permission request screen if camera permissions are missing.
+Background: Full-screen <CameraView facing="back" style="{StyleSheet.absoluteFillObject}"/>.
+2. Exercise Configuration State Toggles
+Render translucent selector pills at the top of the HUD:
+Tracking Mode: Phone Mounted on Weight (Default) vs Tripod / Off-Device.
+Equipment Type: Cable / Pulley Machine vs Barbell / Free Weight.
+In Mounted Mode, sample Accelerometer at $60\text{ Hz}$ (setUpdateInterval(16)), passing $a_y = \text{data.y} \times 9.81$ into update(0, accelY, 0.0166).
+3. Automatic Rep Detection State Machine
+Define rep data state RepData[] ({ repNumber: number, meanVelocity: number, peakVelocity: number, peakAccel: number, durationSec: number }):
+Rep Start Trigger: Begin rep tracking when upward filtered velocity exceeds $0.15\text{ m/s}$.
+Active Rep Sampling: Log live velocity and acceleration vectors during concentric phase.
+Rep Completion Trigger: Finish rep when velocity drops below $0.05\text{ m/s}$ or changes direction for $>0.2\text{ seconds}$.
+Rep Metrics Calculation: Compute Concentric Mean Velocity ($m/s$), Peak Velocity ($m/s$), Peak Acceleration ($m/s^2$), and Velocity Loss % relative to Rep 1 of the current set.
+4. Live HUD Overlay Design
+Overlay a translucent dark container (rgba(0,0,0,0.45)) on top of the camera view containing:
+Top Header: Mode pills ([Mounted] | [Cable Pulley]).
+Center Telemetry: Large neon text (#00FF88) showing live velocity (0.00 m/s) and position (0.00 m).
+Rep Metrics Bar: Current rep count and last rep mean velocity.
+Action Button: Prominent toggle button for "Start Set" / "Finish Set".
+5. Post-Exercise Feedback Modal (In-Memory)
+When "Finish Set" is tapped:
+Stop sensor listening and display a full-screen overlay modal.
+Set Summary Header: Total Reps Completed, Best Rep Velocity ($m/s$), Total Velocity Loss %.
+Rep-by-Rep Breakdown Table: Render a clean table with columns: Rep #, Mean Vel (m/s), Peak Vel (m/s), Peak Accel (m/s²).
+Footer Action: Render a "Start Next Set" button that clears the rep history array, calls resetTracker(), closes the modal, and returns to live filming mode.
+Apply all changes directly to target files. Execute silently without generating summary text or explanations.
