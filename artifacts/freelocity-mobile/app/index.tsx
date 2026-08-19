@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
+import { useVbtTracker } from '@/src/hooks/useVbtTracker';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -576,9 +577,8 @@ export default function MotionTrackerScreen() {
   // Sensor
   const [sensorAvailable, setSensorAvailable] = useState<boolean | null>(null);
   const [live, setLive] = useState<SensorReading>({ x: 0, y: 0, z: 0 });
-  const [serverVelocity, setServerVelocity] = useState(0);
-  const [serverPosition, setServerPosition] = useState(0);
   const sampleBuffer = useRef<AccelerationSample[]>([]);
+  const vbtTracker = useVbtTracker();
 
   // Workflow state
   const [phase, setPhase] = useState<Phase>('setup');
@@ -670,20 +670,7 @@ export default function MotionTrackerScreen() {
     Accelerometer.setUpdateInterval(1000 / RECORD_HZ);
     const sub = Accelerometer.addListener((d) => {
       const accelY_ms2 = d.y * 9.81;
-      fetch('http://localhost:8000/process-frame', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accel_y: accelY_ms2, dt: 0.0166 }),
-      })
-        .then((response) => {
-          if (!response.ok) throw new Error(`process-frame failed: ${response.status}`);
-          return response.json() as Promise<{ velocity?: number; position?: number }>;
-        })
-        .then((result) => {
-          if (typeof result.velocity === 'number') setServerVelocity(result.velocity);
-          if (typeof result.position === 'number') setServerPosition(result.position);
-        })
-        .catch(() => {});
+      vbtTracker.processFrame(accelY_ms2, 0.0166);
 
       const sample: AccelerationSample = {
         x: d.x,
@@ -699,15 +686,10 @@ export default function MotionTrackerScreen() {
     return () => {
       sub.remove();
     };
-  }, [phase, sensorAvailable]);
+  }, [phase, sensorAvailable, vbtTracker.processFrame]);
 
   function handleReset() {
-    fetch('http://localhost:8000/reset', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    }).catch(() => {});
-    setServerVelocity(0);
-    setServerPosition(0);
+    vbtTracker.reset();
     sampleBuffer.current = [];
     setSampleCount(0);
   }
@@ -1059,12 +1041,12 @@ export default function MotionTrackerScreen() {
               <View style={styles.serverMotionRow}>
                 <View style={styles.serverMotionMetric}>
                   <Text style={[styles.metricLabel, { color: colors.mutedForeground }]}>SERVER VELOCITY</Text>
-                  <Text style={[styles.metricValue, { color: colors.primary }]}>{serverVelocity.toFixed(3)}</Text>
+                  <Text style={[styles.metricValue, { color: colors.primary }]}>{vbtTracker.velocity.toFixed(3)}</Text>
                   <Text style={[styles.metricUnit, { color: colors.mutedForeground }]}>m/s</Text>
                 </View>
                 <View style={styles.serverMotionMetric}>
                   <Text style={[styles.metricLabel, { color: colors.mutedForeground }]}>SERVER POSITION</Text>
-                  <Text style={[styles.metricValue, { color: colors.destructive }]}>{serverPosition.toFixed(3)}</Text>
+                  <Text style={[styles.metricValue, { color: colors.destructive }]}>{vbtTracker.position.toFixed(3)}</Text>
                   <Text style={[styles.metricUnit, { color: colors.mutedForeground }]}>m</Text>
                 </View>
                 <Pressable
