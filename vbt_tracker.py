@@ -1,0 +1,117 @@
+import cv2
+
+import numpy as np
+
+import torch
+
+from ultralytics import YOLO
+
+
+class VBT_Tracker:
+
+    def __init__(self, yolo_model_path: str = "yolov8n.pt", plate_diameter_m: float = 0.45):
+
+        self.plate_diameter_m = plate_diameter_m
+
+        self.meters_per_pixel = None
+
+        self.is_calibrated = False
+
+        self.yolo_model = YOLO(yolo_model_path)
+
+        self.lk_params = dict(
+
+            winSize=(21, 21),
+
+            maxLevel=3,
+
+            criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01)
+
+        )
+
+        self.feature_params = dict(
+
+            maxCorners=100,
+
+            qualityLevel=0.3,
+
+            minDistance=7,
+
+            blockSize=7
+
+        )
+
+        self.prev_gray = None
+        self.p0 = None
+        self.x = np.array([[0.0], [0.0]])
+        self.P = np.eye(2) * 0.1
+        self.H = np.array([[1.0, 0.0]])
+        self.sigma_a = 0.35
+        self.sigma_vis = 0.003
+        self.cum_visual_pos = 0.0
+
+    def calibrate_scale_yolo(self, frame: np.ndarray) -> bool:
+        results = self.yolo_model(frame, verbose=False)
+        max_height_px = 0.0
+        for result in results:
+            for box in result.boxes:
+                coords = box.xyxy[0].cpu().numpy()
+                h_px = coords[3] - coords[1]
+                if h_px > max_height_px:
+                    max_height_px = h_px
+        if max_height_px > 20.0:
+            self.meters_per_pixel = self.plate_diameter_m / max_height_px
+            self.is_calibrated = True
+            return True
+        return False
+
+    def _refresh_keypoints(self, gray_frame: np.ndarray):
+        self.p0 = cv2.goodFeaturesToTrack(gray_frame, mask=None, **self.feature_params)
+
+    def track_optical_flow(self, gray_frame: np.ndarray) -> float:
+        if self.prev_gray is None or self.p0 is None or len(self.p0) < 5:
+            self._refresh_keypoints(gray_frame)
+            self.prev_gray = gray_frame.copy()
+            return 0.0
+        p1, status, _ = cv2.calcOpticalFlowPyrLK(
+            self.prev_gray, gray_frame, self.p0, None, **self.lk_params
+        )
+        if p1 is None or status is None:
+            self._refresh_keypoints(gray_frame)
+            self.prev_gray = gray_frame.copy()
+            return 0.0
+        good_new = p1[status == 1]
+        good_old = self.p0[status == 1]
+        if len(good_new) < 5:
+            self._refresh_keypoints(gray_frame)
+            self.prev_gray = gray_frame.copy()
+            return 0.0
+        dy_pixels = np.median(good_new[:, 1] - good_old[:, 1])
+        delta_y_m = -dy_pixels * self.meters_per_pixel
+        self.p0 = good_new.reshape(-1, 1, 2)
+        self.prev_gray = gray_frame.copy()
+        return float(delta_y_m)
+
+    def process_frame(self, video_frame: np.ndarray, current_accel_y: float, dt: float) -> float:
+        gray = cv2.cvtColor(video_frame, cv2.COLOR_BGR2GRAY)
+        if not self.is_calibrated:
+            if not self.calibrate_scale_yolo(video_frame):
+                return 0.0
+        delta_y_m = self.track_optical_flow(gray)
+        self.cum_visual_pos += delta_y_m
+        F = np.array([[1.0, dt], [0.0, 1.0]])
+        B = np.array([[0.5 * (dt ** 2)], [dt]])
+        Q = (self.sigma_a ** 2) * np.array([
+            [0.25 * (dt ** 4), 0.5 * (dt ** 3)],
+            [0.5 * (dt ** 3), dt ** 2]
+        ])
+        self.x = (F @ self.x) + (B * current_accel_y)
+        self.P = (F @ self.P @ F.T) + Q
+        z = np.array([[self.cum_visual_pos]])
+        R = np.array([[self.sigma_vis ** 2]])
+        y_tilde = z - (self.H @ self.x)
+        S = (self.H @ self.P @ self.H.T) + R
+        K = (self.P @ self.H.T) @ np.linalg.inv(S)
+        self.x = self.x + (K @ y_tilde)
+        self.P = (np.eye(2) - (K @ self.H)) @ self.P
+        return float(self.x[1, 0])
