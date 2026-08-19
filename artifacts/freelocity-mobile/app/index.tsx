@@ -576,6 +576,8 @@ export default function MotionTrackerScreen() {
   // Sensor
   const [sensorAvailable, setSensorAvailable] = useState<boolean | null>(null);
   const [live, setLive] = useState<SensorReading>({ x: 0, y: 0, z: 0 });
+  const [serverVelocity, setServerVelocity] = useState(0);
+  const [serverPosition, setServerPosition] = useState(0);
   const sampleBuffer = useRef<AccelerationSample[]>([]);
 
   // Workflow state
@@ -667,6 +669,22 @@ export default function MotionTrackerScreen() {
     // Re-subscribe to make sure the listener is capturing into the new buffer
     Accelerometer.setUpdateInterval(1000 / RECORD_HZ);
     const sub = Accelerometer.addListener((d) => {
+      const accelY_ms2 = d.y * 9.81;
+      fetch('http://localhost:8000/process-frame', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accel_y: accelY_ms2, dt: 0.0166 }),
+      })
+        .then((response) => {
+          if (!response.ok) throw new Error(`process-frame failed: ${response.status}`);
+          return response.json() as Promise<{ velocity?: number; position?: number }>;
+        })
+        .then((result) => {
+          if (typeof result.velocity === 'number') setServerVelocity(result.velocity);
+          if (typeof result.position === 'number') setServerPosition(result.position);
+        })
+        .catch(() => {});
+
       const sample: AccelerationSample = {
         x: d.x,
         y: d.y,
@@ -682,6 +700,17 @@ export default function MotionTrackerScreen() {
       sub.remove();
     };
   }, [phase, sensorAvailable]);
+
+  function handleReset() {
+    fetch('http://localhost:8000/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    }).catch(() => {});
+    setServerVelocity(0);
+    setServerPosition(0);
+    sampleBuffer.current = [];
+    setSampleCount(0);
+  }
 
   // ---------------------------------------------------------------------------
   // Form helpers
@@ -1027,6 +1056,32 @@ export default function MotionTrackerScreen() {
                   ? 'Values are in G. Velocity uses full-body motion magnitude for pocket mode.'
                   : 'Values are in G. Velocity is integrated from the Z-axis (vertical bar path).'}
               </Text>
+              <View style={styles.serverMotionRow}>
+                <View style={styles.serverMotionMetric}>
+                  <Text style={[styles.metricLabel, { color: colors.mutedForeground }]}>SERVER VELOCITY</Text>
+                  <Text style={[styles.metricValue, { color: colors.primary }]}>{serverVelocity.toFixed(3)}</Text>
+                  <Text style={[styles.metricUnit, { color: colors.mutedForeground }]}>m/s</Text>
+                </View>
+                <View style={styles.serverMotionMetric}>
+                  <Text style={[styles.metricLabel, { color: colors.mutedForeground }]}>SERVER POSITION</Text>
+                  <Text style={[styles.metricValue, { color: colors.destructive }]}>{serverPosition.toFixed(3)}</Text>
+                  <Text style={[styles.metricUnit, { color: colors.mutedForeground }]}>m</Text>
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Reset server motion tracking"
+                  onPress={handleReset}
+                  style={({ pressed }) => [
+                    styles.resetButton,
+                    {
+                      borderColor: colors.destructive,
+                      backgroundColor: pressed ? colors.destructive + '18' : colors.card,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.resetButtonText, { color: colors.destructive }]}>Reset</Text>
+                </Pressable>
+              </View>
             </View>
           )}
 
@@ -1709,6 +1764,20 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 2,
   },
+  serverMotionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  serverMotionMetric: { flex: 1, minWidth: 90, gap: 2 },
+  resetButton: {
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  resetButtonText: { fontSize: 12, fontWeight: '800' },
 
   footerText: {
     fontSize: 12,
