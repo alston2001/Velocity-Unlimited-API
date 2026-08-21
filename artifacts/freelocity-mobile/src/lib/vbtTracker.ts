@@ -1,427 +1,505 @@
-import { scrubFrameBuffer } from '@/src/lib/security';
+export type TrackerMode = 'FREE_WEIGHT_SIDE' | 'PULLEY_FRONT';
+export type TrackerPhase = 'IDLE' | 'ACTIVE' | 'COOLDOWN';
 
-export type CalibrationTarget = 'plate' | 'sleeve' | 'shaft';
+export type Point = { x: number; y: number };
 
-export type GravityVector = {
-  x: number;
-  y: number;
-  z: number;
+export type RepMetric = {
+  repNumber: number;
+  repTimeSec: number;
+  peakVelocity: number;
+  meanVelocity: number;
 };
 
-export type Keypoint = {
-  x: number;
-  y: number;
-  score: number;
+export type SetSummary = {
+  reps: RepMetric[];
+  meanRepTime: number;
+  topSpeed: number;
+  peakVelocities: number[];
+  consistencyScore: number;
 };
 
-export type DisplacementVector = {
-  x: number;
-  y: number;
-  displacementY: number;
-  score: number;
+export type TrackerSnapshot = {
+  reps: RepMetric[];
+  currentVelocity: number;
+  displacement: number;
+  phase: TrackerPhase;
+  centroid: Point | null;
+  trajectory: Point[];
+  completedSet: SetSummary | null;
 };
 
-export interface VBTState {
-  velocity: number;
-  position: number;
-  isCalibrated: boolean;
-  tiltAngleDeg: number;
+export interface ExerciseTrackerEngine {
+  readonly reps: RepMetric[];
+  readonly currentVelocity: number;
+  readonly displacement: number;
+  readonly phase: TrackerPhase;
+  readonly centroid: Point | null;
+  readonly trajectory: Point[];
+  readonly completedSet: SetSummary | null;
+  processFrame(
+    rgba: Uint8ClampedArray | null,
+    width: number,
+    height: number,
+    dt: number,
+  ): TrackerSnapshot;
+  updateImu(accelY: number, dt: number): TrackerSnapshot;
+  manualIncrementRep(): TrackerSnapshot;
+  reset(): TrackerSnapshot;
+  calibratePlate(observedPx: number): boolean;
+  setCustomReference(referenceMeters: number, observedPx: number): boolean;
+  snapshot(): TrackerSnapshot;
 }
 
-const TARGET_DIAMETERS_M: Record<CalibrationTarget, number> = {
-  plate: 0.45,
-  sleeve: 0.05,
-  shaft: 0.028,
-};
-
-const DEFAULT_DT = 1 / 60;
-const GRAVITY = 9.81;
+const PLATE_DIAMETER_M = 0.45;
+const DEFAULT_PLATE_PX = 300;
+const IDLE_NOISE_FLOOR = 0.035;
+const MOTION_SPIKE_THRESHOLD = 0.09;
+const STILLNESS_SECONDS = 2.5;
+const MIN_REP_VELOCITY = 0.015;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function median(values: number[]) {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2
-    ? sorted[middle]!
-    : (sorted[middle - 1]! + sorted[middle]!) / 2;
-}
-
-function grayscaleAt(
-  rgba: Uint8ClampedArray,
-  width: number,
-  x: number,
-  y: number,
-) {
+function grayAt(buffer: Uint8ClampedArray, width: number, x: number, y: number) {
   const offset = (y * width + x) * 4;
   return (
-    rgba[offset]! * 0.299 +
-    rgba[offset + 1]! * 0.587 +
-    rgba[offset + 2]! * 0.114
+    buffer[offset]! * 0.299 +
+    buffer[offset + 1]! * 0.587 +
+    buffer[offset + 2]! * 0.114
   );
 }
 
+function hsvAt(buffer: Uint8ClampedArray, width: number, x: number, y: number) {
+  const offset = (y * width + x) * 4;
+  const red = buffer[offset]! / 255;
+  const green = buffer[offset + 1]! / 255;
+  const blue = buffer[offset + 2]! / 255;
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const delta = max - min;
+  let hue = 0;
+  if (delta !== 0) {
+    if (max === red) hue = ((green - blue) / delta) % 6;
+    else if (max === green) hue = (blue - red) / delta + 2;
+    else hue = (red - green) / delta + 4;
+    hue /= 6;
+    if (hue < 0) hue += 1;
+  }
+  return { h: hue, s: max === 0 ? 0 : delta / max, v: max };
+}
+
+export function otsuThreshold(values: Float32Array) {
+  const histogram = new Uint32Array(256);
+  for (const value of values) histogram[clamp(Math.round(value), 0, 255)]!++;
+  const total = values.length;
+  let sum = 0;
+  for (let index = 0; index < 256; index++) sum += index * histogram[index]!;
+  let weightBackground = 0;
+  let sumBackground = 0;
+  let bestVariance = 0;
+  let threshold = 0;
+  for (let index = 0; index < 256; index++) {
+    weightBackground += histogram[index]!;
+    if (weightBackground === 0) continue;
+    const weightForeground = total - weightBackground;
+    if (weightForeground === 0) break;
+    sumBackground += index * histogram[index]!;
+    const meanBackground = sumBackground / weightBackground;
+    const meanForeground = (sum - sumBackground) / weightForeground;
+    const variance =
+      weightBackground *
+      weightForeground *
+      (meanBackground - meanForeground) ** 2;
+    if (variance > bestVariance) {
+      bestVariance = variance;
+      threshold = index;
+    }
+  }
+  return threshold;
+}
+
 /**
- * Finds Shi-Tomasi/FAST-like high contrast corners on a regular image grid.
- * The routine intentionally uses only typed arrays and scalar operations so it
- * can be moved to a frame processor without adding a native CV dependency.
+ * Mode A pipeline: HSV glare masking → Otsu foreground threshold → Canny-like
+ * gradient edges → largest connected moving component centroid.
  */
-export function detectCornerKeypoints(
-  rgba: Uint8ClampedArray,
+export function findSideProfileCentroid(
+  current: Uint8ClampedArray,
+  previous: Uint8ClampedArray | null,
   width: number,
   height: number,
-  gridSize = 16,
-  threshold = 18,
-): Keypoint[] {
-  const points: Keypoint[] = [];
-  if (width < 5 || height < 5 || rgba.length < width * height * 4) {
-    scrubFrameBuffer(rgba);
-    return points;
+): Point | null {
+  if (width < 8 || height < 8 || current.length < width * height * 4) {
+    return null;
+  }
+  const grayscale = new Float32Array(width * height);
+  const motion = new Uint8Array(width * height);
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const index = y * width + x;
+      const hsv = hsvAt(current, width, x, y);
+      const value = grayAt(current, width, x, y);
+      grayscale[index] = value;
+      const glare = hsv.v * 255 > 240;
+      const diff =
+        previous && previous.length >= width * height * 4
+          ? Math.abs(value - grayAt(previous, width, x, y))
+          : 255;
+      motion[index] = glare || diff < 8 ? 0 : 1;
+    }
   }
 
-  for (let gy = 2; gy < height - 2; gy += gridSize) {
-    for (let gx = 2; gx < width - 2; gx += gridSize) {
-      let bestScore = threshold;
-      let bestX = gx;
-      let bestY = gy;
+  const threshold = otsuThreshold(grayscale);
+  const edge = new Uint8Array(width * height);
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const index = y * width + x;
+      const gx = grayscale[index + 1]! - grayscale[index - 1]!;
+      const gy = grayscale[index + width]! - grayscale[index - width]!;
+      const magnitude = Math.sqrt(gx * gx + gy * gy);
+      edge[index] =
+        motion[index] && (grayscale[index]! > threshold || magnitude > 22)
+          ? 1
+          : 0;
+    }
+  }
 
-      for (let y = gy; y < Math.min(gy + gridSize, height - 2); y += 2) {
-        for (let x = gx; x < Math.min(gx + gridSize, width - 2); x += 2) {
-          const dx =
-            grayscaleAt(rgba, width, x + 1, y) -
-            grayscaleAt(rgba, width, x - 1, y);
-          const dy =
-            grayscaleAt(rgba, width, x, y + 1) -
-            grayscaleAt(rgba, width, x, y - 1);
-          const cross =
-            Math.abs(
-              grayscaleAt(rgba, width, x + 1, y + 1) -
-                grayscaleAt(rgba, width, x - 1, y - 1),
-            ) +
-            Math.abs(
-              grayscaleAt(rgba, width, x - 1, y + 1) -
-                grayscaleAt(rgba, width, x + 1, y - 1),
-            );
-          const score = Math.min(
-            Math.sqrt(dx * dx + dy * dy),
-            cross * 0.5 + Math.abs(dx - dy) * 0.25,
-          );
-          if (score > bestScore) {
-            bestScore = score;
-            bestX = x;
-            bestY = y;
+  const visited = new Uint8Array(width * height);
+  let largest: Point[] = [];
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const start = y * width + x;
+      if (!edge[start] || visited[start]) continue;
+      const queue = [start];
+      const component: Point[] = [];
+      visited[start] = 1;
+      while (queue.length) {
+        const index = queue.pop()!;
+        const pointX = index % width;
+        const pointY = Math.floor(index / width);
+        component.push({ x: pointX, y: pointY });
+        for (const [dx, dy] of [
+          [1, 0],
+          [-1, 0],
+          [0, 1],
+          [0, -1],
+        ]) {
+          const nextX = pointX + dx;
+          const nextY = pointY + dy;
+          const next = nextY * width + nextX;
+          if (
+            nextX > 0 &&
+            nextX < width - 1 &&
+            nextY > 0 &&
+            nextY < height - 1 &&
+            edge[next] &&
+            !visited[next]
+          ) {
+            visited[next] = 1;
+            queue.push(next);
           }
         }
       }
-
-      if (bestScore > threshold) {
-        points.push({ x: bestX, y: bestY, score: bestScore });
-      }
+      if (component.length > largest.length) largest = component;
     }
   }
-
-  scrubFrameBuffer(rgba);
-  return points;
-}
-
-function patchCorrelation(
-  previous: Uint8ClampedArray,
-  current: Uint8ClampedArray,
-  width: number,
-  height: number,
-  x: number,
-  yA: number,
-  yB: number,
-  radius: number,
-) {
-  let sumA = 0;
-  let sumB = 0;
-  let count = 0;
-  for (let py = -radius; py <= radius; py++) {
-    for (let px = -radius; px <= radius; px++) {
-      const ax = x + px;
-      const ay = yA + py;
-      const bx = x + px;
-      const by = yB + py;
-      if (
-        ax < 0 ||
-        ax >= width ||
-        bx < 0 ||
-        bx >= width ||
-        ay < 0 ||
-        ay >= height ||
-        by < 0 ||
-        by >= height
-      ) {
-        continue;
-      }
-      sumA += grayscaleAt(previous, width, ax, ay);
-      sumB += grayscaleAt(current, width, bx, by);
-      count++;
-    }
-  }
-  if (count < 9) return -1;
-
-  const meanA = sumA / count;
-  const meanB = sumB / count;
-  let numerator = 0;
-  let varianceA = 0;
-  let varianceB = 0;
-  for (let py = -radius; py <= radius; py++) {
-    for (let px = -radius; px <= radius; px++) {
-      const ax = x + px;
-      const ay = yA + py;
-      const bx = x + px;
-      const by = yB + py;
-      if (
-        ax < 0 ||
-        ax >= width ||
-        bx < 0 ||
-        bx >= width ||
-        ay < 0 ||
-        ay >= height ||
-        by < 0 ||
-        by >= height
-      ) {
-        continue;
-      }
-      const a = grayscaleAt(previous, width, ax, ay) - meanA;
-      const b = grayscaleAt(current, width, bx, by) - meanB;
-      numerator += a * b;
-      varianceA += a * a;
-      varianceB += b * b;
-    }
-  }
-  return numerator / Math.sqrt(varianceA * varianceB + 1e-6);
+  return largest.length < 4
+    ? null
+    : {
+        x: largest.reduce((sum, point) => sum + point.x, 0) / largest.length,
+        y: largest.reduce((sum, point) => sum + point.y, 0) / largest.length,
+      };
 }
 
 /**
- * Tracks vertical motion using zero-normalized cross-correlation (ZNCC).
+ * Mode B vertical optical-flow/motion-blob approximation. It uses
+ * zero-normalized vertical block correlation and returns pixel displacement.
  */
-export function trackVerticalDisplacement(
-  previous: Uint8ClampedArray,
+export function estimatePulleyDisplacement(
   current: Uint8ClampedArray,
+  previous: Uint8ClampedArray | null,
   width: number,
   height: number,
-  keypoints: Keypoint[],
-  searchRadius = 18,
-  patchRadius = 3,
-): DisplacementVector[] {
-  const vectors: DisplacementVector[] = [];
-  for (const point of keypoints) {
-    let bestOffset = 0;
-    let bestScore = -1;
-    for (let offset = -searchRadius; offset <= searchRadius; offset++) {
-      const score = patchCorrelation(
-        previous,
-        current,
-        width,
-        height,
-        Math.round(point.x),
-        Math.round(point.y),
-        Math.round(point.y + offset),
-        patchRadius,
-      );
-      if (score > bestScore) {
-        bestScore = score;
-        bestOffset = offset;
+) {
+  if (!previous || current.length < width * height * 4) return 0;
+  const radius = 4;
+  const search = Math.min(24, Math.floor(height / 5));
+  const x = Math.floor(width / 2);
+  const y = Math.floor(height / 2);
+  let bestOffset = 0;
+  let bestScore = -Infinity;
+  const patchMean = (buffer: Uint8ClampedArray, offsetY: number) => {
+    let sum = 0;
+    let count = 0;
+    for (let py = -radius; py <= radius; py++) {
+      for (let px = -radius; px <= radius; px++) {
+        const sampleX = clamp(x + px, 0, width - 1);
+        const sampleY = clamp(y + offsetY + py, 0, height - 1);
+        sum += grayAt(buffer, width, sampleX, sampleY);
+        count++;
       }
     }
-    if (bestScore > 0.25) {
-      vectors.push({
-        x: point.x,
-        y: point.y,
-        displacementY: bestOffset,
-        score: bestScore,
-      });
+    return sum / count;
+  };
+  const previousMean = patchMean(previous, 0);
+  for (let offset = -search; offset <= search; offset++) {
+    const score = -Math.abs(previousMean - patchMean(current, offset));
+    if (score > bestScore) {
+      bestScore = score;
+      bestOffset = offset;
     }
   }
-  scrubFrameBuffer(previous);
-  scrubFrameBuffer(current);
-  return vectors;
+  return bestOffset;
 }
 
-/**
- * Rejects spatially inconsistent motion vectors using a 2.5 MAD fence.
- */
-export function rejectSpatialOutliers(
-  vectors: DisplacementVector[],
-  madMultiplier = 2.5,
-) {
-  if (vectors.length < 3) return vectors;
-  const displacements = vectors.map((vector) => vector.displacementY);
-  const center = median(displacements);
-  const mad = median(displacements.map((value) => Math.abs(value - center)));
-  if (mad < 0.0001) {
-    return vectors.filter(
-      (vector) => Math.abs(vector.displacementY - center) < 1,
-    );
-  }
-  return vectors.filter(
-    (vector) =>
-      Math.abs(vector.displacementY - center) <= madMultiplier * mad,
-  );
+function variance(values: number[]) {
+  if (values.length < 2) return 0;
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  return values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
 }
 
-export function estimateVerticalDisplacement(vectors: DisplacementVector[]) {
-  return median(rejectSpatialOutliers(vectors).map((vector) => vector.displacementY));
-}
-
-export class VBTTracker {
-  private metersPerPixel = TARGET_DIAMETERS_M.plate / 300;
-  private calibrated = false;
-  private targetType: CalibrationTarget = 'plate';
-  private tiltAngleRad = 0;
-  private lastGravity: GravityVector = { x: 0, y: 0, z: GRAVITY };
-
-  // State vector x = [position (m), velocity (m/s)]ᵀ.
-  private x: [number, number] = [0, 0];
-  private P: [[number, number], [number, number]] = [
-    [0.1, 0],
-    [0, 0.1],
+class Kalman3D {
+  private state: [number, number, number] = [0, 0, 0];
+  private covariance = [
+    [0.1, 0, 0],
+    [0, 0.1, 0],
+    [0, 0, 0.4],
   ];
-  private cumVisualPos = 0;
-  private sigmaA = 0.35;
-  private sigmaVisual = 0.003;
-  private staticTime = 0;
-  private accelerationWindow: number[] = [];
 
-  public calibrateScale(
-    observedPx: number,
-    targetType: CalibrationTarget = 'plate',
-    gravity = this.lastGravity,
-  ) {
-    if (!Number.isFinite(observedPx) || observedPx <= 2) return false;
-    this.targetType = targetType;
-    this.setGravity(gravity);
-    const rectifiedPx = observedPx * Math.cos(this.tiltAngleRad);
-    if (rectifiedPx <= 2) return false;
-    this.metersPerPixel = TARGET_DIAMETERS_M[targetType] / rectifiedPx;
-    this.calibrated = true;
-    return true;
+  predict(acceleration: number, dt: number) {
+    const dt2 = dt * dt;
+    this.state = [
+      this.state[0] + this.state[1] * dt + 0.5 * this.state[2] * dt2,
+      this.state[1] + this.state[2] * dt,
+      this.state[2] * 0.92 + acceleration * 0.08,
+    ];
+    this.covariance[0]![0]! += 0.002;
+    this.covariance[1]![1]! += 0.03;
+    this.covariance[2]![2]! += 0.08;
   }
 
-  public setGravity(gravity: GravityVector) {
-    this.lastGravity = gravity;
-    const magnitude = Math.sqrt(
-      gravity.x ** 2 + gravity.y ** 2 + gravity.z ** 2,
-    );
-    if (magnitude > 0.001) {
-      this.tiltAngleRad = Math.asin(clamp(gravity.y / magnitude, -1, 1));
+  measurePosition(position: number) {
+    const residual = position - this.state[0];
+    if (Math.abs(residual) > 0.08) return;
+    const gain = this.covariance[0]![0]! / (this.covariance[0]![0]! + 0.004);
+    this.state[0] += gain * residual;
+    this.state[1] += gain * residual * 0.6;
+    this.state[2] += gain * residual * 0.2;
+    this.covariance[0]![0]! *= 1 - gain;
+  }
+
+  values() {
+    return { position: this.state[0], velocity: this.state[1], acceleration: this.state[2] };
+  }
+
+  reset() {
+    this.state = [0, 0, 0];
+    this.covariance = [
+      [0.1, 0, 0],
+      [0, 0.1, 0],
+      [0, 0, 0.4],
+    ];
+  }
+}
+
+export class ExerciseTracker implements ExerciseTrackerEngine {
+  readonly mode: TrackerMode;
+  private readonly kalman = new Kalman3D();
+  private previousFrame: Uint8ClampedArray | null = null;
+  private metersPerPixel = PLATE_DIAMETER_M / DEFAULT_PLATE_PX;
+  private phaseValue: TrackerPhase = 'IDLE';
+  private repsValue: RepMetric[] = [];
+  private velocityValue = 0;
+  private displacementValue = 0;
+  private centroidValue: Point | null = null;
+  private trajectoryValue: Point[] = [];
+  private completedSetValue: SetSummary | null = null;
+  private previousVelocity = 0;
+  private previousDisplacement = 0;
+  private stillnessSeconds = 0;
+  private activeSeconds = 0;
+  private lastRepAt = 0;
+  private idleFrameCounter = 0;
+
+  constructor(mode: TrackerMode) {
+    this.mode = mode;
+  }
+
+  get reps() { return this.repsValue; }
+  get currentVelocity() { return this.velocityValue; }
+  get displacement() { return this.displacementValue; }
+  get phase() { return this.phaseValue; }
+  get centroid() { return this.centroidValue; }
+  get trajectory() { return this.trajectoryValue; }
+  get completedSet() { return this.completedSetValue; }
+
+  processFrame(
+    rgba: Uint8ClampedArray | null,
+    width: number,
+    height: number,
+    dt: number,
+  ) {
+    if (this.phaseValue === 'COOLDOWN') return this.snapshot();
+    const previous = this.previousFrame;
+    let motion = 0;
+    if (rgba && rgba.length >= width * height * 4) {
+      if (this.mode === 'FREE_WEIGHT_SIDE') {
+        const lastCentroid = this.centroidValue;
+        const centroid = findSideProfileCentroid(rgba, previous, width, height);
+        if (centroid) {
+          motion = lastCentroid ? Math.abs(centroid.y - lastCentroid.y) : 0;
+          this.centroidValue = centroid;
+          this.trajectoryValue = [...this.trajectoryValue, centroid].slice(-60);
+          if (lastCentroid) {
+            this.kalman.measurePosition(
+              this.displacementValue - (centroid.y - lastCentroid.y) * this.metersPerPixel,
+            );
+          }
+        }
+      } else {
+        const deltaPixels = estimatePulleyDisplacement(rgba, previous, width, height);
+        motion = Math.abs(deltaPixels);
+        this.displacementValue += deltaPixels * this.metersPerPixel;
+        this.kalman.measurePosition(this.displacementValue);
+      }
+      this.previousFrame = rgba.slice();
+    }
+    if (this.phaseValue === 'IDLE') {
+      this.idleFrameCounter++;
+      if (this.idleFrameCounter % 4 === 0 && motion > IDLE_NOISE_FLOOR) {
+        this.phaseValue = 'ACTIVE';
+      }
+    }
+    this.advancePhase(motion, dt);
+    return this.snapshot();
+  }
+
+  updateImu(accelY: number, dt: number) {
+    if (this.phaseValue === 'COOLDOWN') return this.snapshot();
+    this.kalman.predict(accelY, dt);
+    const values = this.kalman.values();
+    this.velocityValue = values.velocity;
+    this.displacementValue = values.position;
+    const motion = Math.abs(accelY) > MOTION_SPIKE_THRESHOLD ? Math.abs(accelY) : 0;
+    if (this.phaseValue === 'IDLE' && motion > MOTION_SPIKE_THRESHOLD) {
+      this.phaseValue = 'ACTIVE';
+    }
+    this.advancePhase(motion, dt);
+    return this.snapshot();
+  }
+
+  private advancePhase(motion: number, dt: number) {
+    if (this.phaseValue !== 'ACTIVE') return;
+    this.activeSeconds += dt;
+    const velocity = this.velocityValue;
+    const crossedBottom =
+      this.activeSeconds > 0.12 &&
+      Math.abs(velocity) > MIN_REP_VELOCITY &&
+      ((this.previousVelocity < -MIN_REP_VELOCITY && velocity >= 0) ||
+        (this.previousVelocity > MIN_REP_VELOCITY && velocity <= 0));
+    if (
+      crossedBottom &&
+      Math.abs(this.displacementValue - this.previousDisplacement) > 0.005
+    ) {
+      this.completeRep();
+    }
+    this.previousVelocity = velocity;
+    this.previousDisplacement = this.displacementValue;
+    if (motion < IDLE_NOISE_FLOOR && Math.abs(velocity) < MIN_REP_VELOCITY) {
+      this.stillnessSeconds += dt;
+    } else {
+      this.stillnessSeconds = 0;
+    }
+    if (this.stillnessSeconds >= STILLNESS_SECONDS) {
+      this.phaseValue = 'COOLDOWN';
+      this.completedSetValue = this.finalizeSet();
     }
   }
 
-  public get tiltAngleDeg() {
-    return (this.tiltAngleRad * 180) / Math.PI;
-  }
-
-  public get calibrationTarget() {
-    return this.targetType;
-  }
-
-  public reset() {
-    this.x = [0, 0];
-    this.P = [
-      [0.1, 0],
-      [0, 0.1],
+  private completeRep() {
+    const repTimeSec = Math.max(0.05, this.activeSeconds - this.lastRepAt);
+    const peakVelocity = Math.abs(this.velocityValue);
+    this.repsValue = [
+      ...this.repsValue,
+      {
+        repNumber: this.repsValue.length + 1,
+        repTimeSec,
+        peakVelocity,
+        meanVelocity: peakVelocity / 2,
+      },
     ];
-    this.cumVisualPos = 0;
-    this.staticTime = 0;
-    this.accelerationWindow = [];
+    this.lastRepAt = this.activeSeconds;
   }
 
-  public getState(): VBTState {
+  private finalizeSet(): SetSummary {
+    const times = this.repsValue.map((rep) => rep.repTimeSec);
+    const peaks = this.repsValue.map((rep) => rep.peakVelocity);
+    const meanRepTime = times.length
+      ? times.reduce((sum, value) => sum + value, 0) / times.length
+      : 0;
+    const topSpeed = peaks.length ? Math.max(...peaks) : 0;
+    const meanPeak = peaks.length
+      ? peaks.reduce((sum, value) => sum + value, 0) / peaks.length
+      : 0;
+    const stdDev = Math.sqrt(variance(peaks));
     return {
-      velocity: this.x[1],
-      position: this.x[0],
-      isCalibrated: this.calibrated,
-      tiltAngleDeg: this.tiltAngleDeg,
+      reps: [...this.repsValue],
+      meanRepTime,
+      topSpeed,
+      peakVelocities: peaks,
+      consistencyScore: meanPeak > 0 ? clamp(100 * (1 - stdDev / meanPeak), 0, 100) : 0,
     };
   }
 
-  public processFrame(
-    deltaYPixels: number,
-    accelY: number,
-    dt = DEFAULT_DT,
-    gravity?: GravityVector,
-  ): VBTState {
-    const safeDt = dt > 0 ? dt : DEFAULT_DT;
-    if (gravity) this.setGravity(gravity);
-    const rectifiedDeltaM =
-      -deltaYPixels * this.metersPerPixel * Math.cos(this.tiltAngleRad);
-    this.cumVisualPos += rectifiedDeltaM;
-
-    const dt2 = safeDt ** 2;
-    const dt3 = safeDt ** 3;
-    const dt4 = safeDt ** 4;
-    const xPred0 = this.x[0] + safeDt * this.x[1] + 0.5 * dt2 * accelY;
-    const xPred1 = this.x[1] + safeDt * accelY;
-    const q = this.sigmaA ** 2;
-    const q00 = q * 0.25 * dt4;
-    const q01 = q * 0.5 * dt3;
-    const q11 = q * dt2;
-    const p00 =
-      this.P[0][0] +
-      safeDt * (this.P[1][0] + this.P[0][1]) +
-      dt2 * this.P[1][1] +
-      q00;
-    const p01 = this.P[0][1] + safeDt * this.P[1][1] + q01;
-    const p10 = this.P[1][0] + safeDt * this.P[1][1] + q01;
-    const p11 = this.P[1][1] + q11;
-
-    const accelerationVariance = this.updateAccelerationVariance(accelY);
-    if (accelerationVariance < 0.05) this.staticTime += safeDt;
-    else this.staticTime = 0;
-
-    // Dynamic R makes fast concentric bursts rely more on IMU prediction.
-    const dynamicScale = Math.exp(Math.max(0, Math.abs(xPred1) - 0.8) * 2);
-    const measurementVariance = this.sigmaVisual ** 2 * dynamicScale;
-    const residual = this.cumVisualPos - xPred0;
-    const gated = Math.abs(residual) > 0.08;
-
-    if (!gated) {
-      const innovationVariance = p00 + measurementVariance;
-      const k0 = p00 / innovationVariance;
-      const k1 = p10 / innovationVariance;
-      this.x[0] = xPred0 + k0 * residual;
-      this.x[1] = xPred1 + k1 * residual;
-      this.P[0][0] = (1 - k0) * p00;
-      this.P[0][1] = (1 - k0) * p01;
-      this.P[1][0] = p10 - k1 * p00;
-      this.P[1][1] = p11 - k1 * p01;
-    } else {
-      this.x = [xPred0, xPred1];
-      this.P = [
-        [p00, p01],
-        [p10, p11],
-      ];
-    }
-
-    // Static pause for >200 ms: eliminate integration drift with a ZUPT.
-    if (this.staticTime > 0.2) {
-      this.x[1] = 0;
-      this.P[1][0] = 0;
-      this.P[0][1] = 0;
-    }
-
-    return this.getState();
+  manualIncrementRep() {
+    if (this.phaseValue === 'COOLDOWN') return this.snapshot();
+    if (this.phaseValue === 'IDLE') this.phaseValue = 'ACTIVE';
+    this.completeRep();
+    return this.snapshot();
   }
 
-  private updateAccelerationVariance(accelY: number) {
-    this.accelerationWindow.push(accelY);
-    if (this.accelerationWindow.length > 15) this.accelerationWindow.shift();
-    if (this.accelerationWindow.length < 3) return Number.POSITIVE_INFINITY;
-    const mean =
-      this.accelerationWindow.reduce((sum, value) => sum + value, 0) /
-      this.accelerationWindow.length;
-    return (
-      this.accelerationWindow.reduce(
-        (sum, value) => sum + (value - mean) ** 2,
-        0,
-      ) / this.accelerationWindow.length
-    );
+  calibratePlate(observedPx: number) {
+    if (this.mode !== 'FREE_WEIGHT_SIDE' || observedPx <= 2) return false;
+    this.metersPerPixel = PLATE_DIAMETER_M / observedPx;
+    return true;
+  }
+
+  setCustomReference(referenceMeters: number, observedPx: number) {
+    if (this.mode !== 'PULLEY_FRONT' || referenceMeters <= 0 || observedPx <= 2) {
+      return false;
+    }
+    this.metersPerPixel = referenceMeters / observedPx;
+    return true;
+  }
+
+  reset() {
+    this.previousFrame = null;
+    this.phaseValue = 'IDLE';
+    this.repsValue = [];
+    this.velocityValue = 0;
+    this.displacementValue = 0;
+    this.centroidValue = null;
+    this.trajectoryValue = [];
+    this.completedSetValue = null;
+    this.previousVelocity = 0;
+    this.previousDisplacement = 0;
+    this.stillnessSeconds = 0;
+    this.activeSeconds = 0;
+    this.lastRepAt = 0;
+    this.idleFrameCounter = 0;
+    this.kalman.reset();
+    return this.snapshot();
+  }
+
+  snapshot(): TrackerSnapshot {
+    return {
+      reps: [...this.repsValue],
+      currentVelocity: this.velocityValue,
+      displacement: this.displacementValue,
+      phase: this.phaseValue,
+      centroid: this.centroidValue,
+      trajectory: [...this.trajectoryValue],
+      completedSet: this.completedSetValue,
+    };
   }
 }

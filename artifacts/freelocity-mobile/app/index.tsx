@@ -173,8 +173,8 @@ export default function MotionTrackerScreen() {
     return (
       <View style={styles.permissionRoot}>
         <Text style={[styles.permissionEyebrow, { color: colors.primary }]}>FREELOCITY / MOTION TRACKER</Text>
-        <Text style={[styles.permissionTitle, { color: colors.foreground }]}>Camera access required</Text>
-        <Text style={[styles.permissionBody, { color: colors.mutedForeground }]}>
+        <Text style={[styles.permissionTitle, { color: '#FFFFFF' }]}>Camera access required</Text>
+        <Text style={[styles.permissionBody, { color: 'rgba(255,255,255,0.65)' }]}>
           Motion tracking needs a live camera feed. Camera frames stay in volatile memory.
         </Text>
         <Pressable onPress={requestPermission} style={[styles.primaryButton, { backgroundColor: colors.primary }]}>
@@ -186,11 +186,11 @@ export default function MotionTrackerScreen() {
 
   const centroidStyle = tracker.centroid
     ? {
-        left: `${Math.min(94, Math.max(2, (tracker.centroid.x / 1080) * 100))}%`,
-        top: `${Math.min(82, Math.max(10, (tracker.centroid.y / 1920) * 100))}%`,
+        left: Math.min(350, Math.max(4, tracker.centroid.x * 0.32)),
+        top: Math.min(580, Math.max(80, tracker.centroid.y * 0.32)),
       }
-    : { left: '50%', top: '45%' };
-  const gaugePosition = `${Math.min(92, Math.max(8, 50 - tracker.displacement * 90))}%`;
+    : { left: 180, top: 320 };
+  const gaugePosition = Math.min(310, Math.max(18, 160 - tracker.displacement * 180));
 
   return (
     <View style={styles.root}>
