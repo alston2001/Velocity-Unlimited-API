@@ -1,73 +1,80 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  VBTTracker,
-  type CalibrationTarget,
-  type GravityVector,
-  type VBTState,
+  ExerciseTracker,
+  type Point,
+  type RepMetric,
+  type SetSummary,
+  type TrackerMode,
+  type TrackerPhase,
 } from '@/src/lib/vbtTracker';
 
-export function useVbtTracker() {
-  const tracker = useRef<VBTTracker | null>(null);
-  if (tracker.current === null) tracker.current = new VBTTracker();
+export function useVbtTracker(mode: TrackerMode) {
+  const engineRef = useRef<ExerciseTracker | null>(null);
+  if (engineRef.current === null || engineRef.current.mode !== mode) {
+    engineRef.current = new ExerciseTracker(mode);
+  }
+  const [snapshot, setSnapshot] = useState(engineRef.current.snapshot());
 
-  const [state, setState] = useState<VBTState>({
-    velocity: 0,
-    position: 0,
-    isCalibrated: false,
-    tiltAngleDeg: 0,
-  });
+  useEffect(() => {
+    setSnapshot(engineRef.current!.reset());
+  }, [mode]);
 
-  const update = useCallback(
+  const updateImu = useCallback((accelY: number, dt: number) => {
+    const next = engineRef.current!.updateImu(accelY, dt);
+    setSnapshot(next);
+    return next;
+  }, []);
+
+  const processFrame = useCallback(
     (
-      deltaYPixels: number,
-      accelY: number,
-      dt: number = 0.0166,
-      gravity?: GravityVector,
+      rgba: Uint8ClampedArray | null,
+      width: number,
+      height: number,
+      dt: number,
     ) => {
-      const next = tracker.current!.processFrame(
-        deltaYPixels,
-        accelY,
-        dt,
-        gravity,
-      );
-      setState(next);
+      const next = engineRef.current!.processFrame(rgba, width, height, dt);
+      setSnapshot(next);
       return next;
     },
     [],
   );
 
-  const resetTracker = useCallback(() => {
-    tracker.current!.reset();
-    setState(tracker.current!.getState());
+  const manualIncrementRep = useCallback(() => {
+    const next = engineRef.current!.manualIncrementRep();
+    setSnapshot(next);
+    return next;
   }, []);
 
-  const calibrate = useCallback(
-    (observedPx: number, targetType: CalibrationTarget = 'plate') => {
-      const calibrated = tracker.current!.calibrateScale(
-        observedPx,
-        targetType,
-      );
-      setState(tracker.current!.getState());
-      return calibrated;
+  const resetTracker = useCallback(() => {
+    const next = engineRef.current!.reset();
+    setSnapshot(next);
+    return next;
+  }, []);
+
+  const calibratePlate = useCallback((observedPx: number) => {
+    return engineRef.current!.calibratePlate(observedPx);
+  }, []);
+
+  const setCustomReference = useCallback(
+    (referenceMeters: number, observedPx: number) => {
+      return engineRef.current!.setCustomReference(referenceMeters, observedPx);
     },
     [],
   );
 
-  const setGravity = useCallback((gravity: GravityVector) => {
-    tracker.current!.setGravity(gravity);
-    setState(tracker.current!.getState());
-  }, []);
-
-  const currentState = state;
-
   return {
-    velocity: currentState.velocity,
-    position: currentState.position,
-    isCalibrated: currentState.isCalibrated,
-    tiltAngleDeg: currentState.tiltAngleDeg,
-    update,
+    reps: snapshot.reps as RepMetric[],
+    currentVelocity: snapshot.currentVelocity,
+    displacement: snapshot.displacement,
+    phase: snapshot.phase as TrackerPhase,
+    centroid: snapshot.centroid as Point | null,
+    trajectory: snapshot.trajectory as Point[],
+    completedSet: snapshot.completedSet as SetSummary | null,
+    updateImu,
+    processFrame,
+    manualIncrementRep,
     resetTracker,
-    calibrate,
-    setGravity,
+    calibratePlate,
+    setCustomReference,
   };
 }
