@@ -5,11 +5,17 @@ export type EyeRegion = {
   y: number;
   width: number;
   height: number;
+  /** Iris diameter in pixels, when a reliable iris boundary is available. */
+  irisDiameterPx?: number;
 };
 
 export type PupilAnalysis = {
   leftDiameterPx: number;
   rightDiameterPx: number;
+  leftRelativeToIris: number;
+  rightRelativeToIris: number;
+  bilateralDilation: number;
+  irisBoundaryReliable: boolean;
   anisocoriaPercent: number;
   pupilScore: number;
   bilateralHyperDilation: boolean;
@@ -153,13 +159,16 @@ export function analyzePupils(
       frameHeight,
       rightEye,
     );
-    const largest = Math.max(leftDiameterPx, rightDiameterPx, 1);
+    const leftIris = leftEye.irisDiameterPx ?? Math.min(leftEye.width, leftEye.height);
+    const rightIris = rightEye.irisDiameterPx ?? Math.min(rightEye.width, rightEye.height);
+    const irisBoundaryReliable = Boolean(leftEye.irisDiameterPx && rightEye.irisDiameterPx);
+    const leftRelativeToIris = leftDiameterPx / Math.max(leftIris, 1);
+    const rightRelativeToIris = rightDiameterPx / Math.max(rightIris, 1);
+    const bilateralDilation = (leftRelativeToIris + rightRelativeToIris) / 2;
+    const largest = Math.max(leftRelativeToIris, rightRelativeToIris, 0.01);
     const anisocoriaPercent =
-      (Math.abs(leftDiameterPx - rightDiameterPx) / largest) * 100;
-    const leftRelative = leftDiameterPx / Math.min(leftEye.width, leftEye.height);
-    const rightRelative =
-      rightDiameterPx / Math.min(rightEye.width, rightEye.height);
-    const bilateralHyperDilation = leftRelative > 0.45 && rightRelative > 0.45;
+      (Math.abs(leftRelativeToIris - rightRelativeToIris) / largest) * 100;
+    const bilateralHyperDilation = bilateralDilation > 0.45;
     const anisocoriaPenalty =
       anisocoriaPercent > 10
         ? clamp((anisocoriaPercent - 10) * 2.5, 0, 40)
@@ -169,6 +178,10 @@ export function analyzePupils(
     return {
       leftDiameterPx,
       rightDiameterPx,
+      leftRelativeToIris,
+      rightRelativeToIris,
+      bilateralDilation,
+      irisBoundaryReliable,
       anisocoriaPercent,
       pupilScore: clamp(anisocoriaPenalty + dilationPenalty, 0, 50),
       bilateralHyperDilation,

@@ -51,6 +51,12 @@ export function useVbtTracker(mode: TrackerMode) {
     return next;
   }, []);
 
+  const stopSet = useCallback(() => {
+    const next = engineRef.current!.stopSet();
+    setSnapshot(next);
+    return next;
+  }, []);
+
   const calibratePlate = useCallback((observedPx: number) => {
     return engineRef.current!.calibratePlate(observedPx);
   }, []);
@@ -74,6 +80,7 @@ export function useVbtTracker(mode: TrackerMode) {
     processFrame,
     manualIncrementRep,
     resetTracker,
+    stopSet,
     calibratePlate,
     setCustomReference,
   };

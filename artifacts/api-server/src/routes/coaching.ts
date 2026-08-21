@@ -212,8 +212,12 @@ router.post("/analyze-set", async (req, res) => {
     return;
   }
 
-  const { exercise_name, weight_kg, target_reps, total_sets, samples, phone_placement } =
-    parsed.data;
+  const { exercise_name, weight_kg, target_reps, total_sets, samples } = parsed.data;
+  // The generated Zod v3 declaration loses the optional defaulted field,
+  // although the runtime schema and OpenAPI contract both accept it.
+  const phone_placement = (parsed.data as typeof parsed.data & {
+    phone_placement?: PhonePlacement;
+  }).phone_placement;
 
   const placement: PhonePlacement = (phone_placement as PhonePlacement) ?? "weight_stack";
 

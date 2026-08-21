@@ -16,6 +16,13 @@ export type SetSummary = {
   topSpeed: number;
   peakVelocities: number[];
   consistencyScore: number;
+  durationSec?: number;
+  sampleCount?: number;
+  velocityLossPct?: number | null;
+  dataQuality?: 'GOOD' | 'DEGRADED' | 'DEMO';
+  confidence?: 'HIGH' | 'MEDIUM' | 'LOW';
+  inferenceSource?: 'IMU' | 'MANUAL' | 'DEMO';
+  limitations?: string[];
 };
 
 export type TrackerSnapshot = {
@@ -455,6 +462,13 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
     if (this.phaseValue === 'COOLDOWN') return this.snapshot();
     if (this.phaseValue === 'IDLE') this.phaseValue = 'ACTIVE';
     this.completeRep();
+    return this.snapshot();
+  }
+
+  stopSet() {
+    if (this.phaseValue === 'COOLDOWN') return this.snapshot();
+    this.phaseValue = 'COOLDOWN';
+    this.completedSetValue = this.finalizeSet();
     return this.snapshot();
   }
 
