@@ -339,6 +339,7 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
   private filteredAccelMs2 = 0;
   private repVelocitySamples: number[] = [];
   private repStartSeconds = 0;
+  private repStartDisplacement = 0;
 
   constructor(mode: TrackerMode) {
     this.mode = mode;
@@ -450,6 +451,7 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
       this.phaseValue = 'ACTIVE';
       this.activeSeconds = 0;
       this.repStartSeconds = 0;
+      this.repStartDisplacement = this.displacementValue;
     }
     this.advancePhase(motion, dt);
     return this.snapshot();
@@ -460,14 +462,16 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
     this.activeSeconds += dt;
     const velocity = this.velocityValue;
     if (velocity === null) return;
+    if (Math.abs(velocity) >= MIN_REP_VELOCITY) {
+      this.repVelocitySamples.push(Math.abs(velocity));
+    }
     const crossedBottom =
       this.activeSeconds > 0.12 &&
-      Math.abs(velocity) > MIN_REP_VELOCITY &&
       ((this.previousVelocity < -MIN_REP_VELOCITY && velocity >= 0) ||
         (this.previousVelocity > MIN_REP_VELOCITY && velocity <= 0));
     if (
       crossedBottom &&
-      Math.abs(this.displacementValue - this.previousDisplacement) > 0.005
+      Math.abs(this.displacementValue - this.repStartDisplacement) >= 0.12
     ) {
       this.completeRep();
     }
@@ -513,11 +517,14 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
     this.lastRepAt = this.activeSeconds;
     this.repVelocitySamples = [];
     this.repStartSeconds = this.activeSeconds;
+    this.repStartDisplacement = this.displacementValue;
   }
 
   private finalizeSet(): SetSummary {
     const times = this.repsValue.map((rep) => rep.repTimeSec);
-    const peaks = this.repsValue.map((rep) => rep.peakVelocity);
+    const peaks = this.repsValue
+      .map((rep) => rep.peakVelocity)
+      .filter((value): value is number => value !== null);
     const meanRepTime = times.length
       ? times.reduce((sum, value) => sum + value, 0) / times.length
       : 0;
@@ -532,6 +539,8 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
       topSpeed,
       peakVelocities: peaks,
       consistencyScore: meanPeak > 0 ? clamp(100 * (1 - stdDev / meanPeak), 0, 100) : 0,
+      measurementStatus: peaks.length > 0 ? 'MEASURED' : 'UNAVAILABLE',
+      unavailableReason: peaks.length > 0 ? undefined : 'No complete calibrated reps were detected.',
     };
   }
 
@@ -591,6 +600,7 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
     this.filteredAccelMs2 = 0;
     this.repVelocitySamples = [];
     this.repStartSeconds = 0;
+    this.repStartDisplacement = 0;
     this.kalman.reset();
     return this.snapshot();
   }

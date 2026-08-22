@@ -61,26 +61,41 @@ function extractAccel(
 function integrateVelocity(
   samples: { x: number; y: number; z: number; timestamp: number }[],
   placement: PhonePlacement = "weight_stack",
-): { velocities: number[]; mean: number; peak: number } {
-  if (samples.length < 2) {
-    return { velocities: [], mean: 0, peak: 0 };
+): { velocities: number[]; mean: number; peak: number; valid: boolean; reason?: string } {
+  if (samples.length < 20) {
+    return { velocities: [], mean: 0, peak: 0, valid: false, reason: "At least 20 timestamped samples are required." };
   }
 
-  const baseline = samples[0]!;
+  const baselineCount = Math.min(10, samples.length);
+  const baseline = samples.slice(0, baselineCount).reduce(
+    (sum, sample) => ({ x: sum.x + sample.x / baselineCount, y: sum.y + sample.y / baselineCount, z: sum.z + sample.z / baselineCount }),
+    { x: 0, y: 0, z: 0 },
+  );
   const velocities: number[] = [0];
   let velocity = 0;
   let sumAbsV = 0;
   let peak = 0;
+  let activeSamples = 0;
 
   for (let i = 1; i < samples.length; i++) {
     const prev = samples[i - 1]!;
     const curr = samples[i]!;
     const dt = (curr.timestamp - prev.timestamp) / 1000;
-    if (dt <= 0) { velocities.push(velocity); continue; }
+    if (dt <= 0 || dt > 0.25) {
+      velocities.push(velocity);
+      velocity = 0;
+      continue;
+    }
 
     const aPrev = extractAccel(prev, baseline, placement) * 9.81;
     const aCurr = extractAccel(curr, baseline, placement) * 9.81;
-    velocity += 0.5 * (aPrev + aCurr) * dt;
+    const averageAccel = 0.5 * (aPrev + aCurr);
+    if (Math.abs(averageAccel) < 0.45) {
+      velocity = Math.abs(velocity) < 0.04 ? 0 : velocity * Math.exp(-8 * dt);
+    } else {
+      velocity = Math.max(-4, Math.min(4, velocity + averageAccel * dt));
+      activeSamples++;
+    }
     velocities.push(velocity);
 
     const absV = Math.abs(velocity);
@@ -88,8 +103,11 @@ function integrateVelocity(
     if (absV > peak) peak = absV;
   }
 
+  if (activeSamples < 8) {
+    return { velocities, mean: 0, peak: 0, valid: false, reason: "No significant calibrated movement was detected." };
+  }
   const mean = sumAbsV / (samples.length - 1);
-  return { velocities, mean, peak };
+  return { velocities, mean, peak, valid: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -284,7 +302,15 @@ router.post("/analyze-set", async (req, res) => {
   const placement: PhonePlacement = (phone_placement as PhonePlacement) ?? "weight_stack";
 
   // 1. Integrate velocity (axis selected by placement)
-  const { velocities, mean, peak } = integrateVelocity(samples, placement);
+  const integration = integrateVelocity(samples, placement);
+  if (!integration.valid) {
+    res.status(422).json({
+      status: "invalid_measurement",
+      message: integration.reason,
+    });
+    return;
+  }
+  const { velocities, mean, peak } = integration;
 
   const durationS =
     samples.length >= 2
@@ -302,6 +328,13 @@ router.post("/analyze-set", async (req, res) => {
   const velocityLossPct = lossResult?.lossPercent ?? null;
   const fatigueLevel = lossResult?.fatigue ?? null;
   const actualReps = repPeaks.length;
+  if (actualReps === 0) {
+    res.status(422).json({
+      status: "invalid_measurement",
+      message: "No complete movement cycle was detected; velocity was withheld.",
+    });
+    return;
+  }
 
   // 3. CNS motor readiness — query against prior persisted sets
   const readinessResult = await computeReadiness(

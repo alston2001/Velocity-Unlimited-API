@@ -7,7 +7,8 @@
     "dev": "EXPO_PACKAGER_PROXY_URL=https://$REPLIT_EXPO_DEV_DOMAIN EXPO_PUBLIC_DOMAIN=$REPLIT_DEV_DOMAIN EXPO_PUBLIC_REPL_ID=$REPL_ID REACT_NATIVE_PACKAGER_HOSTNAME=$REPLIT_DEV_DOMAIN pnpm exec expo start --localhost --port $PORT",
     "build": "node scripts/build.js",
     "serve": "node server/serve.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:tracker": "rm -rf .tracker-test && pnpm exec tsc src/lib/vbtTracker.ts --target ES2022 --module commonjs --outDir .tracker-test --skipLibCheck && node scripts/run-tracker-tests.cjs && rm -rf .tracker-test"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

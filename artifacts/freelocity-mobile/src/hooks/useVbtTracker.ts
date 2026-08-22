@@ -19,10 +19,16 @@ export function useVbtTracker(mode: TrackerMode) {
     setSnapshot(engineRef.current!.reset());
   }, [mode]);
 
-  const updateImu = useCallback((accelY: number, dt: number) => {
-    const next = engineRef.current!.updateImu(accelY, dt);
+  const updateImu = useCallback((accelMs2: number, timestampMs: number) => {
+    const next = engineRef.current!.updateImu(accelMs2, timestampMs);
     setSnapshot(next);
     return next;
+  }, []);
+
+  const calibrateImu = useCallback((restSamplesMs2: number[]) => {
+    const calibrated = engineRef.current!.calibrateImu(restSamplesMs2);
+    setSnapshot(engineRef.current!.snapshot());
+    return calibrated;
   }, []);
 
   const processFrame = useCallback(
@@ -71,12 +77,14 @@ export function useVbtTracker(mode: TrackerMode) {
   return {
     reps: snapshot.reps as RepMetric[],
     currentVelocity: snapshot.currentVelocity,
+    calibrated: engineRef.current.calibrated,
     displacement: snapshot.displacement,
     phase: snapshot.phase as TrackerPhase,
     centroid: snapshot.centroid as Point | null,
     trajectory: snapshot.trajectory as Point[],
     completedSet: snapshot.completedSet as SetSummary | null,
     updateImu,
+    calibrateImu,
     processFrame,
     manualIncrementRep,
     resetTracker,
