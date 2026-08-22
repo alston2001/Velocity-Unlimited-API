@@ -1,0 +1,21 @@
+{
+  "mass": {
+    "kilogramsPerPound": 0.45359237,
+    "poundsPerKilogram": 2.20462262185,
+    "canonicalUnit": "kg",
+    "units": {
+      "imperial": {
+        "label": "Imperial",
+        "name": "pounds",
+        "abbreviation": "lb",
+        "displayDecimals": 1
+      },
+      "metric": {
+        "label": "Metric",
+        "name": "kilograms",
+        "abbreviation": "kg",
+        "displayDecimals": 1
+      }
+    }
+  }
+}

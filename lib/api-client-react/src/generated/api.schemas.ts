@@ -24,6 +24,17 @@ export interface AccelerationSample {
 }
 
 /**
+ * User-facing mass unit used for load labels and coaching copy
+ */
+export type SetAnalysisRequestDisplayUnit = typeof SetAnalysisRequestDisplayUnit[keyof typeof SetAnalysisRequestDisplayUnit];
+
+
+export const SetAnalysisRequestDisplayUnit = {
+  imperial: 'imperial',
+  metric: 'metric',
+} as const;
+
+/**
  * How the phone is mounted during the set. Affects which axis is used for velocity integration and how the AI coaching interprets the data.
  */
 export type SetAnalysisRequestPhonePlacement = typeof SetAnalysisRequestPhonePlacement[keyof typeof SetAnalysisRequestPhonePlacement];
@@ -43,6 +54,10 @@ export interface SetAnalysisRequest {
   exercise_name: string;
   /** Load on the bar in kilograms */
   weight_kg: number;
+  /** User-facing mass unit used for load labels and coaching copy */
+  display_unit?: SetAnalysisRequestDisplayUnit;
+  /** User-entered load in display_unit; weight_kg remains canonical */
+  display_load?: number;
   /** Planned rep count for the set */
   target_reps: number;
   /** Total sets planned in the workout */
@@ -99,5 +114,24 @@ export interface SetAnalysisResult {
   actual_reps: number;
   /** Per-rep peak velocity in m/s, ordered first rep to last rep */
   rep_peaks_ms: number[];
+}
+
+/**
+ * Immutable demo history row. Loads are always canonical kilograms.
+ */
+export interface DemoHistoricalSet {
+  id: string;
+  setNumber: number;
+  exercise: string;
+  daysBeforeDemo: number;
+  /** Canonical load in kilograms */
+  loadKg: number;
+  targetReps: number;
+  actualReps: number;
+  meanRepTimeSec: number;
+  velocityLossPct: number;
+  displacementM: number | null;
+  source: string;
+  provenance: string;
 }
 

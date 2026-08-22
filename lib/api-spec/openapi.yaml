@@ -58,6 +58,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /history:
+    get:
+      operationId: getDemoHistory
+      tags: [coaching]
+      summary: Get canonical demo history
+      description: Returns the immutable 24-set demo history in canonical kilograms
+      responses:
+        "200":
+          description: Canonical demo history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DemoHistoricalSet"
 components:
   schemas:
     HealthStatus:
@@ -98,6 +113,14 @@ components:
         weight_kg:
           type: number
           description: Load on the bar in kilograms
+        display_unit:
+          type: string
+          enum: [imperial, metric]
+          default: metric
+          description: User-facing mass unit used for load labels and coaching copy
+        display_load:
+          type: number
+          description: User-entered load in display_unit; weight_kg remains canonical
         target_reps:
           type: integer
           description: Planned rep count for the set
@@ -212,3 +235,46 @@ components:
         - baseline_velocity_ms
         - actual_reps
         - rep_peaks_ms
+    DemoHistoricalSet:
+      type: object
+      description: Immutable demo history row. Loads are always canonical kilograms.
+      properties:
+        id:
+          type: string
+        setNumber:
+          type: integer
+        exercise:
+          type: string
+        daysBeforeDemo:
+          type: integer
+        loadKg:
+          type: number
+          description: Canonical load in kilograms
+        targetReps:
+          type: integer
+        actualReps:
+          type: integer
+        meanRepTimeSec:
+          type: number
+        velocityLossPct:
+          type: number
+        displacementM:
+          type: number
+          nullable: true
+        source:
+          type: string
+        provenance:
+          type: string
+      required:
+        - id
+        - setNumber
+        - exercise
+        - daysBeforeDemo
+        - loadKg
+        - targetReps
+        - actualReps
+        - meanRepTimeSec
+        - velocityLossPct
+        - displacementM
+        - source
+        - provenance

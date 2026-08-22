@@ -20,6 +20,7 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  DemoHistoricalSet,
   HealthStatus,
   SetAnalysisRequest,
   SetAnalysisResult
@@ -268,6 +269,84 @@ export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getHealthCheckQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetDemoHistoryUrl = () => {
+
+
+
+
+  return `/api/history`
+}
+
+/**
+ * Returns the immutable 24-set demo history in canonical kilograms
+ * @summary Get canonical demo history
+ */
+export const getDemoHistory = async ( options?: Parameters<typeof customFetch>[1]): Promise<DemoHistoricalSet[]> => {
+
+  return customFetch<DemoHistoricalSet[]>(getGetDemoHistoryUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetDemoHistoryQueryKey = () => {
+    return [
+    `/api/history`
+    ] as const;
+    }
+
+
+export const getGetDemoHistoryQueryOptions = <TData = Awaited<ReturnType<typeof getDemoHistory>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDemoHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDemoHistoryQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDemoHistory>>> = ({ signal }) => getDemoHistory({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDemoHistory>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetDemoHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof getDemoHistory>>>
+export type GetDemoHistoryQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get canonical demo history
+ */
+
+export function useGetDemoHistory<TData = Awaited<ReturnType<typeof getDemoHistory>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDemoHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetDemoHistoryQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

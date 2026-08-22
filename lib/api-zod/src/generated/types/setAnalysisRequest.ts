@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { AccelerationSample } from './accelerationSample';
+import type { SetAnalysisRequestDisplayUnit } from './setAnalysisRequestDisplayUnit';
 import type { SetAnalysisRequestPhonePlacement } from './setAnalysisRequestPhonePlacement';
 
 /**
@@ -16,6 +17,10 @@ export interface SetAnalysisRequest {
   exercise_name: string;
   /** Load on the bar in kilograms */
   weight_kg: number;
+  /** User-facing mass unit used for load labels and coaching copy */
+  display_unit?: SetAnalysisRequestDisplayUnit;
+  /** User-entered load in display_unit; weight_kg remains canonical */
+  display_load?: number;
   /** Planned rep count for the set */
   target_reps: number;
   /** Total sets planned in the workout */

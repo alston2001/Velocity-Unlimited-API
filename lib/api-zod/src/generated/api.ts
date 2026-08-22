@@ -19,11 +19,14 @@ export const ApiHomeResponse = zod.string()
  * Accepts a raw acceleration batch and returns velocity-integrated coaching feedback enriched with VBT profiles, CNS readiness score, and AI coaching text
  * @summary Analyze a set
  */
+export const analyzeSetBodyDisplayUnitDefault = `metric`;
 export const analyzeSetBodyPhonePlacementDefault = `weight_stack`;
 
 export const AnalyzeSetBody = zod.object({
   "exercise_name": zod.string().describe('Name of the exercise (e.g. \"Bench Press\")'),
   "weight_kg": zod.number().describe('Load on the bar in kilograms'),
+  "display_unit": zod.enum(['imperial', 'metric']).default(analyzeSetBodyDisplayUnitDefault).describe('User-facing mass unit used for load labels and coaching copy'),
+  "display_load": zod.number().optional().describe('User-entered load in display_unit; weight_kg remains canonical'),
   "target_reps": zod.number().int().describe('Planned rep count for the set'),
   "total_sets": zod.number().int().describe('Total sets planned in the workout'),
   "samples": zod.array(zod.object({
@@ -66,5 +69,26 @@ export const AnalyzeSetResponse = zod.object({
 export const HealthCheckResponse = zod.object({
   "status": zod.string()
 })
+
+
+/**
+ * Returns the immutable 24-set demo history in canonical kilograms
+ * @summary Get canonical demo history
+ */
+export const GetDemoHistoryResponseItem = zod.object({
+  "id": zod.string(),
+  "setNumber": zod.number().int(),
+  "exercise": zod.string(),
+  "daysBeforeDemo": zod.number().int(),
+  "loadKg": zod.number().describe('Canonical load in kilograms'),
+  "targetReps": zod.number().int(),
+  "actualReps": zod.number().int(),
+  "meanRepTimeSec": zod.number(),
+  "velocityLossPct": zod.number(),
+  "displacementM": zod.number().nullable(),
+  "source": zod.string(),
+  "provenance": zod.string()
+}).describe('Immutable demo history row. Loads are always canonical kilograms.')
+export const GetDemoHistoryResponse = zod.array(GetDemoHistoryResponseItem)
 
 

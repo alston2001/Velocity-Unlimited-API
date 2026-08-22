@@ -1,4 +1,6 @@
 import { Router, type IRouter } from "express";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { AnalyzeSetBody } from "@workspace/api-zod";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { db, setsTable } from "@workspace/db";
@@ -19,12 +21,17 @@ import {
 } from "../cns-readiness.js";
 
 const router: IRouter = Router();
+const DEMO_HISTORY_PATHS = [
+  resolve(process.cwd(), "previous_sets.json"),
+  resolve(process.cwd(), "../../previous_sets.json"),
+];
 
 // ---------------------------------------------------------------------------
 // Velocity integration — trapezoidal rule, axis selected by placement
 // ---------------------------------------------------------------------------
 
 type PhonePlacement = "weight_stack" | "barbell" | "pocket";
+type DisplayUnit = "imperial" | "metric";
 
 /**
  * Extract the scalar "motion" acceleration from a sample, gravity-corrected.
@@ -98,6 +105,8 @@ const PLACEMENT_LABELS: Record<PhonePlacement, string> = {
 interface CoachingContext {
   exerciseName: string;
   weightKg: number;
+  displayLoad: number;
+  displayUnit: DisplayUnit;
   targetReps: number;
   totalSets: number;
   meanVelocityMs: number;
@@ -159,7 +168,7 @@ Keep responses to 2–4 sentences maximum.`;
   const userPrompt = `Analyze this completed set and give coaching feedback:
 
 Exercise: ${ctx.exerciseName}
-Load: ${ctx.weightKg.toFixed(1)} kg
+Load: ${ctx.displayLoad.toFixed(1)} ${ctx.displayUnit === "imperial" ? "lb" : "kg"} (canonical ${ctx.weightKg.toFixed(3)} kg for matching and calculations)
 Target reps: ${ctx.targetReps} | Total sets planned: ${ctx.totalSets}
 Set duration: ${ctx.durationS.toFixed(1)} s
 ${placementNote}
@@ -200,6 +209,53 @@ router.get("/", (_req, res) => {
   res.type("text/plain").send(`Freelocity API is live! ${status}`);
 });
 
+router.get("/history", (_req, res) => {
+  try {
+    const historyPath = DEMO_HISTORY_PATHS.find((candidate) => existsSync(candidate));
+    if (!historyPath) {
+      res.status(500).json({ status: "error", message: "Demo history file is missing" });
+      return;
+    }
+    const rows = JSON.parse(readFileSync(historyPath, "utf8")) as Array<{
+      id: string;
+      setNumber: number;
+      exercise: string;
+      daysBeforeDemo: number;
+      loadKg: number;
+      targetReps: number;
+      actualReps: number;
+      meanRepTimeSec: number;
+      velocityLossPct: number;
+      displacementM: number | null;
+      source: string;
+      provenance: string;
+    }>;
+
+    if (!Array.isArray(rows) || rows.length !== 24) {
+      res.status(500).json({ status: "error", message: "Demo history is invalid" });
+      return;
+    }
+
+    res.json(rows.map((row) => ({
+      id: row.id,
+      setNumber: row.setNumber,
+      exercise: row.exercise,
+      daysBeforeDemo: row.daysBeforeDemo,
+      loadKg: row.loadKg,
+      targetReps: row.targetReps,
+      actualReps: row.actualReps,
+      meanRepTimeSec: row.meanRepTimeSec,
+      velocityLossPct: row.velocityLossPct,
+      displacementM: row.displacementM,
+      source: row.source,
+      provenance: row.provenance,
+    })));
+  } catch (error) {
+    console.error("[history] Failed to load canonical demo history:", error);
+    res.status(500).json({ status: "error", message: "Demo history unavailable" });
+  }
+});
+
 router.post("/analyze-set", async (req, res) => {
   const parsed = AnalyzeSetBody.safeParse(req.body);
 
@@ -213,6 +269,12 @@ router.post("/analyze-set", async (req, res) => {
   }
 
   const { exercise_name, weight_kg, target_reps, total_sets, samples } = parsed.data;
+  const requestWithUnits = parsed.data as typeof parsed.data & {
+    display_unit?: DisplayUnit;
+    display_load?: number;
+  };
+  const displayUnit = requestWithUnits.display_unit ?? "metric";
+  const displayLoad = requestWithUnits.display_load ?? weight_kg;
   // The generated Zod v3 declaration loses the optional defaulted field,
   // although the runtime schema and OpenAPI contract both accept it.
   const phone_placement = (parsed.data as typeof parsed.data & {
@@ -273,6 +335,8 @@ router.post("/analyze-set", async (req, res) => {
   const aiFeedback = await generateCoachingFeedback({
     exerciseName: exercise_name,
     weightKg: weight_kg,
+    displayLoad,
+    displayUnit,
     targetReps: target_reps,
     totalSets: total_sets,
     meanVelocityMs: mean,
