@@ -8,6 +8,15 @@
 
 export * from './accelerationSample';
 export * from './demoHistoricalSet';
+export * from './diaryEntry';
+export * from './diaryEntrySentiment';
+export * from './diaryEntrySentimentStatus';
+export * from './diaryEntryUpsert';
+export * from './diaryTrend';
+export * from './diaryTrendPoint';
+export * from './diaryTrendPointSentiment';
+export * from './getDiaryEntriesParams';
+export * from './getDiaryTrendParams';
 export * from './healthStatus';
 export * from './setAnalysisRequest';
 export * from './setAnalysisRequestDisplayUnit';

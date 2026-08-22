@@ -14,6 +14,7 @@ export interface DeterministicCoachingInput {
   cnsReadinessScore: number | null;
   motorReadinessLevel: string;
   baselineVelocityMs: number | null;
+  diaryContext: string | null;
 }
 
 export function buildHistoricalComparison(
@@ -76,5 +77,8 @@ export function buildDeterministicCoaching(ctx: DeterministicCoachingInput): str
     ctx.cnsReadinessScore === null
       ? "There is not enough load-matched history to score readiness yet."
       : `Readiness is ${ctx.cnsReadinessScore}/100 (${ctx.motorReadinessLevel}) against the ${ctx.baselineVelocityMs?.toFixed(3) ?? "available"} m/s baseline.`;
-  return `${ctx.historicalComparison.insight} ${loss} ${readiness}`;
+  const diary = ctx.diaryContext
+    ? `Diary context: ${ctx.diaryContext} This may help explain the day, but it does not establish cause or change the measured result.`
+    : "";
+  return `${ctx.historicalComparison.insight} ${loss} ${readiness} ${diary}`.trim();
 }

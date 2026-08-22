@@ -5,7 +5,15 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import * as zod from 'zod';
+import * as zodV3 from 'zod';
+
+// Orval emits Zod v4 helpers while this workspace currently runs Zod v3.
+// Keep this small compatibility layer after every generated-client refresh.
+const zod = {
+  ...zodV3,
+  int: () => zodV3.number().int(),
+  uuid: () => zodV3.string().uuid(),
+};
 
 
 /**
@@ -19,6 +27,7 @@ export const ApiHomeResponse = zod.string()
  * Accepts a raw acceleration batch and returns velocity-integrated coaching feedback enriched with VBT profiles, CNS readiness score, and AI coaching text
  * @summary Analyze a set
  */
+
 export const analyzeSetBodyDisplayUnitDefault = `metric`;
 export const analyzeSetBodyPhonePlacementDefault = `weight_stack`;
 
@@ -27,8 +36,8 @@ export const AnalyzeSetBody = zod.object({
   "weight_kg": zod.number().describe('Load on the bar in kilograms'),
   "display_unit": zod.enum(['imperial', 'metric']).default(analyzeSetBodyDisplayUnitDefault).describe('User-facing mass unit used for load labels and coaching copy'),
   "display_load": zod.number().optional().describe('User-entered load in display_unit; weight_kg remains canonical'),
-  "target_reps": zod.number().int().describe('Planned rep count for the set'),
-  "total_sets": zod.number().int().describe('Total sets planned in the workout'),
+  "target_reps": zod.int().describe('Planned rep count for the set'),
+  "total_sets": zod.int().describe('Total sets planned in the workout'),
   "samples": zod.array(zod.object({
   "x": zod.number().describe('X-axis acceleration in G'),
   "y": zod.number().describe('Y-axis acceleration in G'),
@@ -44,25 +53,27 @@ export const AnalyzeSetResponse = zod.object({
   "mean_velocity_ms": zod.number().describe('Mean bar velocity in m\/s integrated from the acceleration batch'),
   "peak_velocity_ms": zod.number().describe('Peak bar velocity in m\/s'),
   "first_rep_peak_ms": zod.number().nullable().describe('First-rep peak velocity in m\/s — primary CNS readiness marker. Null when fewer than 1 rep detected.'),
-  "estimated_1rm_pct": zod.number().int().describe('Estimated percentage of 1RM based on exercise-specific load-velocity profile'),
+  "estimated_1rm_pct": zod.int().describe('Estimated percentage of 1RM based on exercise-specific load-velocity profile'),
   "velocity_zone": zod.string().describe('VBT training zone: Maximal Strength \/ Strength-Speed \/ Speed-Strength \/ Power \/ Starting'),
   "velocity_loss_pct": zod.number().nullable().describe('Velocity loss from first to last rep (%). Null when fewer than 2 reps detected.'),
   "fatigue_level": zod.string().nullable().describe('Qualitative fatigue classification based on velocity loss'),
-  "sample_count": zod.number().int().describe('Number of samples processed'),
+  "sample_count": zod.int().describe('Number of samples processed'),
   "duration_s": zod.number().describe('Total set duration in seconds'),
   "ai_feedback": zod.string().describe('AI-generated coaching feedback grounded in VBT standards'),
   "sparkden_history_used": zod.boolean().describe('Whether historical Sparkden session data was incorporated in the feedback'),
-  "cns_readiness_score": zod.number().int().nullable().describe('Motor readiness score 0–100 based on first-rep peak vs. 21-day load-matched baseline. Null when fewer than 3 historical sets exist at this load.'),
+  "cns_readiness_score": zod.int().nullable().describe('Motor readiness score 0–100 based on first-rep peak vs. 21-day load-matched baseline. Null when fewer than 3 historical sets exist at this load.'),
   "motor_readiness_level": zod.string().nullable().describe('Qualitative readiness classification: High \/ Moderate \/ Low \/ Compromised \/ Insufficient data'),
   "velocity_trend": zod.string().nullable().describe('Session-to-session velocity trend: Rising \/ Stable \/ Declining \/ Insufficient data'),
-  "readiness_data_points": zod.number().int().describe('Number of historical load-matched sessions used to compute readiness'),
+  "readiness_data_points": zod.int().describe('Number of historical load-matched sessions used to compute readiness'),
   "baseline_velocity_ms": zod.number().nullable().describe('The 21-day load-matched mean first-rep peak used as the readiness baseline. Null when insufficient data.'),
-  "actual_reps": zod.number().int().describe('Number of reps detected from the velocity trace via peak-detection'),
+  "actual_reps": zod.int().describe('Number of reps detected from the velocity trace via peak-detection'),
   "rep_peaks_ms": zod.array(zod.number()).describe('Per-rep peak velocity in m\/s, ordered first rep to last rep'),
   "historical_comparison": zod.string().describe('Actionable comparison against the selected exercise\'s load-matched historical profile'),
   "historical_comparison_delta_pct": zod.number().nullable().describe('Current mean velocity deviation from the load-matched historical baseline (%)'),
   "historical_baseline_velocity_ms": zod.number().nullable().describe('Load-matched historical mean-velocity baseline in m\/s'),
-  "historical_comparison_data_points": zod.number().int().describe('Number of historical load-matched sessions used for the comparison')
+  "historical_comparison_data_points": zod.int().describe('Number of historical load-matched sessions used for the comparison'),
+  "diary_context_available": zod.boolean().describe('Whether an optional diary sentiment context was available for this set date'),
+  "diary_context": zod.string().nullable().describe('Non-clinical sentiment context only; does not contain the raw diary note')
 })
 
 
@@ -81,12 +92,12 @@ export const HealthCheckResponse = zod.object({
  */
 export const GetDemoHistoryResponseItem = zod.object({
   "id": zod.string(),
-  "setNumber": zod.number().int(),
+  "setNumber": zod.int(),
   "exercise": zod.string(),
-  "daysBeforeDemo": zod.number().int(),
+  "daysBeforeDemo": zod.int(),
   "loadKg": zod.number().describe('Canonical load in kilograms'),
-  "targetReps": zod.number().int(),
-  "actualReps": zod.number().int(),
+  "targetReps": zod.int(),
+  "actualReps": zod.int(),
   "meanRepTimeSec": zod.number(),
   "velocityLossPct": zod.number(),
   "displacementM": zod.number().nullable(),
@@ -94,5 +105,98 @@ export const GetDemoHistoryResponseItem = zod.object({
   "provenance": zod.string()
 }).describe('Immutable demo history row. Loads are always canonical kilograms.')
 export const GetDemoHistoryResponse = zod.array(GetDemoHistoryResponseItem)
+
+
+/**
+ * @summary Get diary entries in a date range
+ */
+export const GetDiaryEntriesQueryParams = zod.object({
+  "start_date": zod.date(),
+  "end_date": zod.date()
+})
+
+export const GetDiaryEntriesResponseItem = zod.object({
+  "id": zod.uuid(),
+  "entry_date": zod.coerce.date(),
+  "note": zod.string(),
+  "sentiment": zod.union([zod.literal('positive'),zod.literal('neutral'),zod.literal('negative'),zod.literal(null)]).nullable(),
+  "sentiment_confidence": zod.number().nullable(),
+  "sentiment_summary": zod.string().nullable().describe('Short non-clinical summary; never a diagnosis'),
+  "sentiment_status": zod.enum(['analyzed', 'unavailable']),
+  "updated_at": zod.coerce.date()
+})
+export const GetDiaryEntriesResponse = zod.array(GetDiaryEntriesResponseItem)
+
+
+/**
+ * @summary Get a diary entry for a day
+ */
+export const GetDiaryEntryParams = zod.object({
+  "date": zod.date()
+})
+
+export const GetDiaryEntryResponse = zod.object({
+  "id": zod.uuid(),
+  "entry_date": zod.coerce.date(),
+  "note": zod.string(),
+  "sentiment": zod.union([zod.literal('positive'),zod.literal('neutral'),zod.literal('negative'),zod.literal(null)]).nullable(),
+  "sentiment_confidence": zod.number().nullable(),
+  "sentiment_summary": zod.string().nullable().describe('Short non-clinical summary; never a diagnosis'),
+  "sentiment_status": zod.enum(['analyzed', 'unavailable']),
+  "updated_at": zod.coerce.date()
+}).nullable()
+
+
+/**
+ * @summary Create or update a diary entry
+ */
+export const SaveDiaryEntryParams = zod.object({
+  "date": zod.date()
+})
+
+export const saveDiaryEntryBodyNoteMax = 2000;
+
+
+
+export const SaveDiaryEntryBody = zod.object({
+  "note": zod.string().min(1).max(saveDiaryEntryBodyNoteMax).describe('Open-text training, mood, recovery, or life note for the selected day')
+})
+
+export const SaveDiaryEntryResponse = zod.object({
+  "id": zod.uuid(),
+  "entry_date": zod.coerce.date(),
+  "note": zod.string(),
+  "sentiment": zod.union([zod.literal('positive'),zod.literal('neutral'),zod.literal('negative'),zod.literal(null)]).nullable(),
+  "sentiment_confidence": zod.number().nullable(),
+  "sentiment_summary": zod.string().nullable().describe('Short non-clinical summary; never a diagnosis'),
+  "sentiment_status": zod.enum(['analyzed', 'unavailable']),
+  "updated_at": zod.coerce.date()
+})
+
+
+/**
+ * @summary Get diary and performance trend context
+ */
+export const getDiaryTrendQueryDaysDefault = 28;
+export const getDiaryTrendQueryDaysMin = 7;
+export const getDiaryTrendQueryDaysMax = 90;
+
+
+
+export const GetDiaryTrendQueryParams = zod.object({
+  "days": zod.coerce.number().int().min(getDiaryTrendQueryDaysMin).max(getDiaryTrendQueryDaysMax).default(getDiaryTrendQueryDaysDefault)
+})
+
+export const GetDiaryTrendResponse = zod.object({
+  "days": zod.int(),
+  "analyzed_entries": zod.int(),
+  "performance_data_points": zod.int(),
+  "correlation_summary": zod.string(),
+  "points": zod.array(zod.object({
+  "entry_date": zod.coerce.date(),
+  "sentiment": zod.enum(['positive', 'neutral', 'negative']),
+  "mean_velocity_ms": zod.number().nullable()
+}))
+})
 
 

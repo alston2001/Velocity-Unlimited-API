@@ -54,4 +54,8 @@ export interface SetAnalysisResult {
   historical_baseline_velocity_ms: number | null;
   /** Number of historical load-matched sessions used for the comparison */
   historical_comparison_data_points: number;
+  /** Whether an optional diary sentiment context was available for this set date */
+  diary_context_available: boolean;
+  /** Non-clinical sentiment context only; does not contain the raw diary note */
+  diary_context: string | null;
 }

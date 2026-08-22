@@ -9,6 +9,67 @@ export interface HealthStatus {
   status: string;
 }
 
+export interface DiaryEntryUpsert {
+  /**
+     * Open-text training, mood, recovery, or life note for the selected day
+     * @minLength 1
+     * @maxLength 2000
+     */
+  note: string;
+}
+
+export type DiaryEntrySentiment = typeof DiaryEntrySentiment[keyof typeof DiaryEntrySentiment] | null;
+
+
+export const DiaryEntrySentiment = {
+  positive: 'positive',
+  neutral: 'neutral',
+  negative: 'negative',
+} as const;
+
+export type DiaryEntrySentimentStatus = typeof DiaryEntrySentimentStatus[keyof typeof DiaryEntrySentimentStatus];
+
+
+export const DiaryEntrySentimentStatus = {
+  analyzed: 'analyzed',
+  unavailable: 'unavailable',
+} as const;
+
+export interface DiaryEntry {
+  id: string;
+  entry_date: string;
+  note: string;
+  sentiment: DiaryEntrySentiment;
+  sentiment_confidence: number | null;
+  /** Short non-clinical summary; never a diagnosis */
+  sentiment_summary: string | null;
+  sentiment_status: DiaryEntrySentimentStatus;
+  updated_at: string;
+}
+
+export type DiaryTrendPointSentiment = typeof DiaryTrendPointSentiment[keyof typeof DiaryTrendPointSentiment];
+
+
+export const DiaryTrendPointSentiment = {
+  positive: 'positive',
+  neutral: 'neutral',
+  negative: 'negative',
+} as const;
+
+export interface DiaryTrendPoint {
+  entry_date: string;
+  sentiment: DiaryTrendPointSentiment;
+  mean_velocity_ms: number | null;
+}
+
+export interface DiaryTrend {
+  days: number;
+  analyzed_entries: number;
+  performance_data_points: number;
+  correlation_summary: string;
+  points: DiaryTrendPoint[];
+}
+
 /**
  * A single three-axis accelerometer reading with a millisecond timestamp
  */
@@ -50,7 +111,10 @@ export const SetAnalysisRequestPhonePlacement = {
  * Exercise setup metadata and the raw sensor batch captured during a set
  */
 export interface SetAnalysisRequest {
-  /** Name of the exercise (e.g. "Bench Press") */
+  /**
+     * Name of the exercise (e.g. "Bench Press")
+     * @minLength 1
+     */
   exercise_name: string;
   /** Load on the bar in kilograms */
   weight_kg: number;
@@ -122,6 +186,10 @@ export interface SetAnalysisResult {
   historical_baseline_velocity_ms: number | null;
   /** Number of historical load-matched sessions used for the comparison */
   historical_comparison_data_points: number;
+  /** Whether an optional diary sentiment context was available for this set date */
+  diary_context_available: boolean;
+  /** Non-clinical sentiment context only; does not contain the raw diary note */
+  diary_context: string | null;
 }
 
 /**
@@ -142,4 +210,17 @@ export interface DemoHistoricalSet {
   source: string;
   provenance: string;
 }
+
+export type GetDiaryEntriesParams = {
+start_date: string;
+end_date: string;
+};
+
+export type GetDiaryTrendParams = {
+/**
+ * @minimum 7
+ * @maximum 90
+ */
+days?: number;
+};
 

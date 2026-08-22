@@ -21,6 +21,11 @@ import type {
 
 import type {
   DemoHistoricalSet,
+  DiaryEntry,
+  DiaryEntryUpsert,
+  DiaryTrend,
+  GetDiaryEntriesParams,
+  GetDiaryTrendParams,
   HealthStatus,
   SetAnalysisRequest,
   SetAnalysisResult
@@ -347,6 +352,323 @@ export function useGetDemoHistory<TData = Awaited<ReturnType<typeof getDemoHisto
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetDemoHistoryQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetDiaryEntriesUrl = (params: GetDiaryEntriesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/diary?${stringifiedParams}` : `/api/diary`
+}
+
+/**
+ * @summary Get diary entries in a date range
+ */
+export const getDiaryEntries = async (params: GetDiaryEntriesParams, options?: Parameters<typeof customFetch>[1]): Promise<DiaryEntry[]> => {
+
+  return customFetch<DiaryEntry[]>(getGetDiaryEntriesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetDiaryEntriesQueryKey = (params?: GetDiaryEntriesParams,) => {
+    return [
+    `/api/diary`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetDiaryEntriesQueryOptions = <TData = Awaited<ReturnType<typeof getDiaryEntries>>, TError = ErrorType<unknown>>(params: GetDiaryEntriesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDiaryEntries>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDiaryEntriesQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDiaryEntries>>> = ({ signal }) => getDiaryEntries(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDiaryEntries>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetDiaryEntriesQueryResult = NonNullable<Awaited<ReturnType<typeof getDiaryEntries>>>
+export type GetDiaryEntriesQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get diary entries in a date range
+ */
+
+export function useGetDiaryEntries<TData = Awaited<ReturnType<typeof getDiaryEntries>>, TError = ErrorType<unknown>>(
+ params: GetDiaryEntriesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDiaryEntries>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetDiaryEntriesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetDiaryEntryUrl = (date: string,) => {
+
+
+
+
+  return `/api/diary/${date}`
+}
+
+/**
+ * @summary Get a diary entry for a day
+ */
+export const getDiaryEntry = async (date: string, options?: Parameters<typeof customFetch>[1]): Promise<DiaryEntry | null> => {
+
+  return customFetch<DiaryEntry | null>(getGetDiaryEntryUrl(date),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetDiaryEntryQueryKey = (date: string,) => {
+    return [
+    `/api/diary/${date}`
+    ] as const;
+    }
+
+
+export const getGetDiaryEntryQueryOptions = <TData = Awaited<ReturnType<typeof getDiaryEntry>>, TError = ErrorType<unknown>>(date: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDiaryEntry>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDiaryEntryQueryKey(date);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDiaryEntry>>> = ({ signal }) => getDiaryEntry(date, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: date !== null && date !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDiaryEntry>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetDiaryEntryQueryResult = NonNullable<Awaited<ReturnType<typeof getDiaryEntry>>>
+export type GetDiaryEntryQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get a diary entry for a day
+ */
+
+export function useGetDiaryEntry<TData = Awaited<ReturnType<typeof getDiaryEntry>>, TError = ErrorType<unknown>>(
+ date: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDiaryEntry>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetDiaryEntryQueryOptions(date,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getSaveDiaryEntryUrl = (date: string,) => {
+
+
+
+
+  return `/api/diary/${date}`
+}
+
+/**
+ * @summary Create or update a diary entry
+ */
+export const saveDiaryEntry = async (date: string,
+    diaryEntryUpsert: DiaryEntryUpsert, options?: Parameters<typeof customFetch>[1]): Promise<DiaryEntry> => {
+
+  return customFetch<DiaryEntry>(getSaveDiaryEntryUrl(date),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(diaryEntryUpsert)
+  }
+);}
+
+
+
+
+
+export const getSaveDiaryEntryMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveDiaryEntry>>, TError,{date: string;data: BodyType<DiaryEntryUpsert>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof saveDiaryEntry>>, TError,{date: string;data: BodyType<DiaryEntryUpsert>}, TContext> => {
+
+const mutationKey = ['saveDiaryEntry'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveDiaryEntry>>, {date: string;data: BodyType<DiaryEntryUpsert>}> = (props) => {
+          const {date,data} = props ?? {};
+
+          return  saveDiaryEntry(date,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveDiaryEntryMutationResult = NonNullable<Awaited<ReturnType<typeof saveDiaryEntry>>>
+    export type SaveDiaryEntryMutationBody = BodyType<DiaryEntryUpsert>
+    export type SaveDiaryEntryMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Create or update a diary entry
+ */
+export const useSaveDiaryEntry = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveDiaryEntry>>, TError,{date: string;data: BodyType<DiaryEntryUpsert>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof saveDiaryEntry>>,
+        TError,
+        {date: string;data: BodyType<DiaryEntryUpsert>},
+        TContext
+      > => {
+      return useMutation(getSaveDiaryEntryMutationOptions(options));
+    }
+
+export const getGetDiaryTrendUrl = (params?: GetDiaryTrendParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/diary-trend?${stringifiedParams}` : `/api/diary-trend`
+}
+
+/**
+ * @summary Get diary and performance trend context
+ */
+export const getDiaryTrend = async (params?: GetDiaryTrendParams, options?: Parameters<typeof customFetch>[1]): Promise<DiaryTrend> => {
+
+  return customFetch<DiaryTrend>(getGetDiaryTrendUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetDiaryTrendQueryKey = (params?: GetDiaryTrendParams,) => {
+    return [
+    `/api/diary-trend`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetDiaryTrendQueryOptions = <TData = Awaited<ReturnType<typeof getDiaryTrend>>, TError = ErrorType<unknown>>(params?: GetDiaryTrendParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDiaryTrend>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDiaryTrendQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDiaryTrend>>> = ({ signal }) => getDiaryTrend(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDiaryTrend>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetDiaryTrendQueryResult = NonNullable<Awaited<ReturnType<typeof getDiaryTrend>>>
+export type GetDiaryTrendQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get diary and performance trend context
+ */
+
+export function useGetDiaryTrend<TData = Awaited<ReturnType<typeof getDiaryTrend>>, TError = ErrorType<unknown>>(
+ params?: GetDiaryTrendParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDiaryTrend>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetDiaryTrendQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

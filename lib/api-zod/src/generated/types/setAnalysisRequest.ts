@@ -13,7 +13,10 @@ import type { SetAnalysisRequestPhonePlacement } from './setAnalysisRequestPhone
  * Exercise setup metadata and the raw sensor batch captured during a set
  */
 export interface SetAnalysisRequest {
-  /** Name of the exercise (e.g. "Bench Press") */
+  /**
+     * Name of the exercise (e.g. "Bench Press")
+     * @minLength 1
+     */
   exercise_name: string;
   /** Load on the bar in kilograms */
   weight_kg: number;

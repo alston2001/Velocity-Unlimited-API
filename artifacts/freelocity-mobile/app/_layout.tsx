@@ -26,6 +26,7 @@ function RootLayoutNav() {
   return (
     <Stack screenOptions={{ headerShown: false, headerBackTitle: 'Back' }}>
       <Stack.Screen name="index" />
+        <Stack.Screen name="diary" />
     </Stack>
   );
 }

@@ -25,6 +25,7 @@ import {
   buildHistoricalComparison,
   type HistoricalComparison,
 } from "../coaching-insights.js";
+import { getDiaryContext } from "../diary.js";
 
 const router: IRouter = Router();
 const DEMO_HISTORY_PATHS = [
@@ -154,6 +155,7 @@ interface CoachingContext {
   readinessDataPoints: number;
   phonePlacement: PhonePlacement;
   historicalComparison: HistoricalComparison;
+  diaryContext: string | null;
 }
 
 async function generateCoachingFeedback(ctx: CoachingContext): Promise<string> {
@@ -182,6 +184,9 @@ CNS Motor Readiness (vs. 21-day load-matched baseline):
       ? `\nCNS Readiness: building baseline (${ctx.readinessDataPoints}/3 sessions tracked at this load)`
       : "\nCNS Readiness: no prior history at this load — today starts the baseline.";
   const comparisonSection = `\nHistorical comparison:\n- ${ctx.historicalComparison.insight}\n- Matched sessions: ${ctx.historicalComparison.dataPoints}`;
+  const diarySection = ctx.diaryContext
+    ? `\nOptional diary context for this date: ${ctx.diaryContext}`
+    : "\nOptional diary context: unavailable for this date.";
 
   const systemPrompt = `You are a concise, data-driven velocity-based training (VBT) coach.
 You communicate exactly like elite strength coaches who use tools like GymAware or PUSH Band in the real world.
@@ -189,6 +194,7 @@ Your feedback is direct, specific, and references actual velocity numbers.
 When CNS readiness data is available, integrate it into your assessment — distinguish between within-session fatigue (velocity loss across reps) and between-session fatigue (CNS readiness vs. baseline).
 Never use generic motivational language. Always ground feedback in the data provided.
 Use the historical comparison to make one concrete next-set recommendation. If the comparison has no matched history, say so plainly rather than inventing a percentage.
+Diary context is optional and non-clinical. If it is available, use it only as cautious context (for example, "this may be consistent with") and never claim mood caused performance, infer a condition, or override the measured velocity/readiness result.
 Keep responses to 2–4 sentences maximum.`;
 
   const placementNote =
@@ -215,6 +221,7 @@ Velocity metrics:
 ${readinessSection}
 ${historySection}
 ${comparisonSection}
+${diarySection}
 
 Provide specific, actionable coaching feedback for the next set. Reference the velocity numbers directly. If readiness is Low or Compromised, factor that into load/intensity recommendations.`;
 
@@ -222,7 +229,7 @@ Provide specific, actionable coaching feedback for the next set. Reference the v
   try {
     const response = await openai.chat.completions.create({
       model: "gpt-5.6-luna",
-      max_completion_tokens: 200,
+      max_completion_tokens: 8192,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
@@ -397,6 +404,12 @@ router.post("/analyze-set", async (req, res) => {
       // Sparkden unavailable — continue without history
     }
   }
+  let diaryContext: string | null = null;
+  try {
+    diaryContext = (await getDiaryContext())?.message ?? null;
+  } catch (error) {
+    req.log.warn({ error }, "Diary context was unavailable for coaching");
+  }
 
   // 5. AI coaching text (includes CNS readiness context)
   const aiFeedback = await generateCoachingFeedback({
@@ -423,6 +436,7 @@ router.post("/analyze-set", async (req, res) => {
     readinessDataPoints: readinessResult.dataPoints,
     phonePlacement: placement,
     historicalComparison,
+    diaryContext,
   });
 
   // 6. Persist this set for future readiness calculations
@@ -472,6 +486,8 @@ router.post("/analyze-set", async (req, res) => {
     historical_comparison_delta_pct: historicalComparison.deltaPct,
     historical_baseline_velocity_ms: historicalComparison.baselineMeanVelocityMs,
     historical_comparison_data_points: historicalComparison.dataPoints,
+    diary_context_available: diaryContext !== null,
+    diary_context: diaryContext,
   });
 });
 

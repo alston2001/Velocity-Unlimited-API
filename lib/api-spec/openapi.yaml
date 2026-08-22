@@ -12,6 +12,8 @@ tags:
     description: Health operations
   - name: coaching
     description: Set analysis operations
+  - name: diary
+    description: Daily training notes and non-clinical sentiment context
 paths:
   /:
     get:
@@ -73,7 +75,98 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/DemoHistoricalSet"
+  /diary:
+    get:
+      operationId: getDiaryEntries
+      tags: [diary]
+      summary: Get diary entries in a date range
+      parameters:
+        - name: start_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Diary entries ordered by date
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DiaryEntry"
+  /diary/{date}:
+    get:
+      operationId: getDiaryEntry
+      tags: [diary]
+      summary: Get a diary entry for a day
+      parameters:
+        - $ref: "#/components/parameters/DiaryDate"
+      responses:
+        "200":
+          description: Entry for the requested date, or null when none exists
+          content:
+            application/json:
+              schema:
+                nullable: true
+                allOf:
+                  - $ref: "#/components/schemas/DiaryEntry"
+    put:
+      operationId: saveDiaryEntry
+      tags: [diary]
+      summary: Create or update a diary entry
+      parameters:
+        - $ref: "#/components/parameters/DiaryDate"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DiaryEntryUpsert"
+      responses:
+        "200":
+          description: Saved entry with sentiment availability details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiaryEntry"
+  /diary-trend:
+    get:
+      operationId: getDiaryTrend
+      tags: [diary]
+      summary: Get diary and performance trend context
+      parameters:
+        - name: days
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 28
+            minimum: 7
+            maximum: 90
+      responses:
+        "200":
+          description: Non-clinical diary and performance overlap summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiaryTrend"
 components:
+  parameters:
+    DiaryDate:
+      name: date
+      in: path
+      required: true
+      schema:
+        type: string
+        format: date
   schemas:
     HealthStatus:
       type: object
@@ -82,6 +175,90 @@ components:
           type: string
       required:
         - status
+    DiaryEntryUpsert:
+      type: object
+      properties:
+        note:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: Open-text training, mood, recovery, or life note for the selected day
+      required:
+        - note
+    DiaryEntry:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        entry_date:
+          type: string
+          format: date
+        note:
+          type: string
+        sentiment:
+          type: string
+          nullable: true
+          enum: [positive, neutral, negative, null]
+        sentiment_confidence:
+          type: number
+          nullable: true
+        sentiment_summary:
+          type: string
+          nullable: true
+          description: Short non-clinical summary; never a diagnosis
+        sentiment_status:
+          type: string
+          enum: [analyzed, unavailable]
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - entry_date
+        - note
+        - sentiment
+        - sentiment_confidence
+        - sentiment_summary
+        - sentiment_status
+        - updated_at
+    DiaryTrendPoint:
+      type: object
+      properties:
+        entry_date:
+          type: string
+          format: date
+        sentiment:
+          type: string
+          enum: [positive, neutral, negative]
+        mean_velocity_ms:
+          type: number
+          nullable: true
+      required:
+        - entry_date
+        - sentiment
+        - mean_velocity_ms
+    DiaryTrend:
+      type: object
+      properties:
+        days:
+          type: integer
+        analyzed_entries:
+          type: integer
+        performance_data_points:
+          type: integer
+        correlation_summary:
+          type: string
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiaryTrendPoint"
+      required:
+        - days
+        - analyzed_entries
+        - performance_data_points
+        - correlation_summary
+        - points
     AccelerationSample:
       type: object
       description: A single three-axis accelerometer reading with a millisecond timestamp
@@ -229,6 +406,13 @@ components:
         historical_comparison_data_points:
           type: integer
           description: Number of historical load-matched sessions used for the comparison
+        diary_context_available:
+          type: boolean
+          description: Whether an optional diary sentiment context was available for this set date
+        diary_context:
+          type: string
+          nullable: true
+          description: Non-clinical sentiment context only; does not contain the raw diary note
       required:
         - status
         - exercise_name
@@ -254,6 +438,8 @@ components:
         - historical_comparison_delta_pct
         - historical_baseline_velocity_ms
         - historical_comparison_data_points
+        - diary_context_available
+        - diary_context
     DemoHistoricalSet:
       type: object
       description: Immutable demo history row. Loads are always canonical kilograms.
