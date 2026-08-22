@@ -109,6 +109,7 @@ components:
       properties:
         exercise_name:
           type: string
+          minLength: 1
           description: Name of the exercise (e.g. "Bench Press")
         weight_kg:
           type: number
@@ -214,6 +215,20 @@ components:
           description: Per-rep peak velocity in m/s, ordered first rep to last rep
           items:
             type: number
+        historical_comparison:
+          type: string
+          description: Actionable comparison against the selected exercise's load-matched historical profile
+        historical_comparison_delta_pct:
+          type: number
+          nullable: true
+          description: Current mean velocity deviation from the load-matched historical baseline (%)
+        historical_baseline_velocity_ms:
+          type: number
+          nullable: true
+          description: Load-matched historical mean-velocity baseline in m/s
+        historical_comparison_data_points:
+          type: integer
+          description: Number of historical load-matched sessions used for the comparison
       required:
         - status
         - exercise_name
@@ -235,6 +250,10 @@ components:
         - baseline_velocity_ms
         - actual_reps
         - rep_peaks_ms
+        - historical_comparison
+        - historical_comparison_delta_pct
+        - historical_baseline_velocity_ms
+        - historical_comparison_data_points
     DemoHistoricalSet:
       type: object
       description: Immutable demo history row. Loads are always canonical kilograms.

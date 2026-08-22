@@ -23,7 +23,7 @@ export const analyzeSetBodyDisplayUnitDefault = `metric`;
 export const analyzeSetBodyPhonePlacementDefault = `weight_stack`;
 
 export const AnalyzeSetBody = zod.object({
-  "exercise_name": zod.string().describe('Name of the exercise (e.g. \"Bench Press\")'),
+  "exercise_name": zod.string().min(1).describe('Name of the exercise (e.g. \"Bench Press\")'),
   "weight_kg": zod.number().describe('Load on the bar in kilograms'),
   "display_unit": zod.enum(['imperial', 'metric']).default(analyzeSetBodyDisplayUnitDefault).describe('User-facing mass unit used for load labels and coaching copy'),
   "display_load": zod.number().optional().describe('User-entered load in display_unit; weight_kg remains canonical'),
@@ -58,7 +58,11 @@ export const AnalyzeSetResponse = zod.object({
   "readiness_data_points": zod.number().int().describe('Number of historical load-matched sessions used to compute readiness'),
   "baseline_velocity_ms": zod.number().nullable().describe('The 21-day load-matched mean first-rep peak used as the readiness baseline. Null when insufficient data.'),
   "actual_reps": zod.number().int().describe('Number of reps detected from the velocity trace via peak-detection'),
-  "rep_peaks_ms": zod.array(zod.number()).describe('Per-rep peak velocity in m\/s, ordered first rep to last rep')
+  "rep_peaks_ms": zod.array(zod.number()).describe('Per-rep peak velocity in m\/s, ordered first rep to last rep'),
+  "historical_comparison": zod.string().describe('Actionable comparison against the selected exercise\'s load-matched historical profile'),
+  "historical_comparison_delta_pct": zod.number().nullable().describe('Current mean velocity deviation from the load-matched historical baseline (%)'),
+  "historical_baseline_velocity_ms": zod.number().nullable().describe('Load-matched historical mean-velocity baseline in m\/s'),
+  "historical_comparison_data_points": zod.number().int().describe('Number of historical load-matched sessions used for the comparison')
 })
 
 

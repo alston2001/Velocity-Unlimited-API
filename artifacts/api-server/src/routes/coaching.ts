@@ -18,7 +18,13 @@ import {
 import {
   computeReadiness,
   buildHistorySummary,
+  canonicalizeExerciseName,
 } from "../cns-readiness.js";
+import {
+  buildDeterministicCoaching,
+  buildHistoricalComparison,
+  type HistoricalComparison,
+} from "../coaching-insights.js";
 
 const router: IRouter = Router();
 const DEMO_HISTORY_PATHS = [
@@ -147,6 +153,7 @@ interface CoachingContext {
   baselineVelocityMs: number | null;
   readinessDataPoints: number;
   phonePlacement: PhonePlacement;
+  historicalComparison: HistoricalComparison;
 }
 
 async function generateCoachingFeedback(ctx: CoachingContext): Promise<string> {
@@ -174,12 +181,14 @@ CNS Motor Readiness (vs. 21-day load-matched baseline):
       : ctx.readinessDataPoints > 0
       ? `\nCNS Readiness: building baseline (${ctx.readinessDataPoints}/3 sessions tracked at this load)`
       : "\nCNS Readiness: no prior history at this load — today starts the baseline.";
+  const comparisonSection = `\nHistorical comparison:\n- ${ctx.historicalComparison.insight}\n- Matched sessions: ${ctx.historicalComparison.dataPoints}`;
 
   const systemPrompt = `You are a concise, data-driven velocity-based training (VBT) coach.
 You communicate exactly like elite strength coaches who use tools like GymAware or PUSH Band in the real world.
 Your feedback is direct, specific, and references actual velocity numbers.
 When CNS readiness data is available, integrate it into your assessment — distinguish between within-session fatigue (velocity loss across reps) and between-session fatigue (CNS readiness vs. baseline).
 Never use generic motivational language. Always ground feedback in the data provided.
+Use the historical comparison to make one concrete next-set recommendation. If the comparison has no matched history, say so plainly rather than inventing a percentage.
 Keep responses to 2–4 sentences maximum.`;
 
   const placementNote =
@@ -205,19 +214,25 @@ Velocity metrics:
 - ${velocityLossLine}
 ${readinessSection}
 ${historySection}
+${comparisonSection}
 
 Provide specific, actionable coaching feedback for the next set. Reference the velocity numbers directly. If readiness is Low or Compromised, factor that into load/intensity recommendations.`;
 
-  const response = await openai.chat.completions.create({
-    model: "gpt-5.6-luna",
-    max_completion_tokens: 200,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt },
-    ],
-  });
-
-  return response.choices[0]?.message?.content?.trim() ?? "Unable to generate feedback.";
+  const fallback = buildDeterministicCoaching(ctx);
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-5.6-luna",
+      max_completion_tokens: 200,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+    });
+    return response.choices[0]?.message?.content?.trim() || fallback;
+  } catch (error) {
+    console.warn("[coaching] AI generation unavailable; returning deterministic evidence-grounded feedback", error);
+    return fallback;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -291,6 +306,15 @@ router.post("/analyze-set", async (req, res) => {
   }
 
   const { exercise_name, weight_kg, target_reps, total_sets, samples } = parsed.data;
+  const exerciseName = exercise_name.trim().replace(/\s+/g, " ");
+  const exerciseIdentity = canonicalizeExerciseName(exerciseName);
+  if (!exerciseName) {
+    res.status(400).json({
+      status: "error",
+      message: "An exercise name is required before recording.",
+    });
+    return;
+  }
   const requestWithUnits = parsed.data as typeof parsed.data & {
     display_unit?: DisplayUnit;
     display_load?: number;
@@ -322,7 +346,7 @@ router.post("/analyze-set", async (req, res) => {
       : 0;
 
   // 2. VBT profile enrichment
-  const profile = getProfile(exercise_name);
+  const profile = getProfile(exerciseName);
   const estimated1RmPct = estimateOneRmPct(mean, profile);
   const velocityZone = getVelocityZone(mean);
 
@@ -342,18 +366,24 @@ router.post("/analyze-set", async (req, res) => {
 
   // 3. CNS motor readiness — query against prior persisted sets
   const readinessResult = await computeReadiness(
-    exercise_name,
+    exerciseName,
     weight_kg,
     firstRepPeakMs,
   );
 
   // 4. Build history summary from DB records (primary) or Sparkden (fallback)
   let historySummary: string | null = buildHistorySummary(readinessResult.history);
+  const historicalComparison = buildHistoricalComparison(
+    exerciseName,
+    weight_kg,
+    mean,
+    readinessResult.history,
+  );
   let sparkdenHistoryUsed = false;
 
   if (!historySummary && isSparkdenConfigured()) {
     try {
-      const sessions = await fetchAthleteSessions(exercise_name, 5);
+      const sessions = await fetchAthleteSessions(exerciseName, 5);
       if (sessions.length > 0) {
         const lines = sessions.map(
           (s) =>
@@ -370,7 +400,7 @@ router.post("/analyze-set", async (req, res) => {
 
   // 5. AI coaching text (includes CNS readiness context)
   const aiFeedback = await generateCoachingFeedback({
-    exerciseName: exercise_name,
+    exerciseName,
     weightKg: weight_kg,
     displayLoad,
     displayUnit,
@@ -392,12 +422,13 @@ router.post("/analyze-set", async (req, res) => {
     baselineVelocityMs: readinessResult.baselineVelocityMs,
     readinessDataPoints: readinessResult.dataPoints,
     phonePlacement: placement,
+    historicalComparison,
   });
 
   // 6. Persist this set for future readiness calculations
   try {
     await db.insert(setsTable).values({
-      exerciseName: exercise_name,
+      exerciseName: exerciseIdentity,
       weightKg: weight_kg,
       targetReps: target_reps,
       actualReps,
@@ -418,7 +449,7 @@ router.post("/analyze-set", async (req, res) => {
 
   res.json({
     status: "success",
-    exercise_name,
+    exercise_name: exerciseName,
     mean_velocity_ms: Math.round(mean * 1000) / 1000,
     peak_velocity_ms: Math.round(peak * 1000) / 1000,
     first_rep_peak_ms: firstRepPeakMs !== null ? Math.round(firstRepPeakMs * 1000) / 1000 : null,
@@ -437,6 +468,10 @@ router.post("/analyze-set", async (req, res) => {
     baseline_velocity_ms: readinessResult.baselineVelocityMs,
     actual_reps: actualReps,
     rep_peaks_ms: repPeaks.map((v) => Math.round(v * 1000) / 1000),
+    historical_comparison: historicalComparison.insight,
+    historical_comparison_delta_pct: historicalComparison.deltaPct,
+    historical_baseline_velocity_ms: historicalComparison.baselineMeanVelocityMs,
+    historical_comparison_data_points: historicalComparison.dataPoints,
   });
 });
 

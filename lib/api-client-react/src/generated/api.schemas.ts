@@ -114,6 +114,14 @@ export interface SetAnalysisResult {
   actual_reps: number;
   /** Per-rep peak velocity in m/s, ordered first rep to last rep */
   rep_peaks_ms: number[];
+  /** Actionable comparison against the selected exercise's load-matched historical profile */
+  historical_comparison: string;
+  /** Current mean velocity deviation from the load-matched historical baseline (%) */
+  historical_comparison_delta_pct: number | null;
+  /** Load-matched historical mean-velocity baseline in m/s */
+  historical_baseline_velocity_ms: number | null;
+  /** Number of historical load-matched sessions used for the comparison */
+  historical_comparison_data_points: number;
 }
 
 /**

@@ -27,7 +27,7 @@
  */
 
 import { db, setsTable } from "@workspace/db";
-import { and, desc, gte, ilike, lte } from "drizzle-orm";
+import { and, desc, gte, lte, sql } from "drizzle-orm";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -67,6 +67,11 @@ export interface HistoricalSetRow {
   actualReps: number;
   velocityLossPct: number | null;
   fatigueLevel: string | null;
+}
+
+/** Case- and whitespace-stable identity for exercise-specific history queries. */
+export function canonicalizeExerciseName(exerciseName: string): string {
+  return exerciseName.trim().toLocaleLowerCase().replace(/\s+/g, " ");
 }
 
 // ---------------------------------------------------------------------------
@@ -134,23 +139,32 @@ async function fetchHistory(
     .from(setsTable)
     .where(
       and(
-        ilike(setsTable.exerciseName, `%${exerciseName}%`),
+        sql`lower(trim(${setsTable.exerciseName})) = ${canonicalizeExerciseName(exerciseName)}`,
         gte(setsTable.createdAt, since),
       ),
     )
     .orderBy(desc(setsTable.createdAt));
 
-  return rows.map((r) => ({
-    date: r.createdAt.toISOString().split("T")[0]!,
-    meanVelocityMs: r.meanVelocityMs,
-    peakVelocityMs: r.peakVelocityMs,
-    firstRepPeakMs: r.firstRepPeakMs ?? null,
-    weightKg: r.weightKg,
-    estimated1RmPct: r.estimated1RmPct,
-    actualReps: r.actualReps,
-    velocityLossPct: r.velocityLossPct ?? null,
-    fatigueLevel: r.fatigueLevel ?? null,
-  }));
+  return rows
+    .map((r) => ({
+      date: r.createdAt.toISOString().split("T")[0]!,
+      meanVelocityMs: r.meanVelocityMs,
+      peakVelocityMs: r.peakVelocityMs,
+      firstRepPeakMs: r.firstRepPeakMs ?? null,
+      weightKg: r.weightKg,
+      estimated1RmPct: r.estimated1RmPct,
+      actualReps: r.actualReps,
+      velocityLossPct: r.velocityLossPct ?? null,
+      fatigueLevel: r.fatigueLevel ?? null,
+    }))
+    .filter(
+      (row) =>
+        Number.isFinite(row.meanVelocityMs) &&
+        row.meanVelocityMs >= 0.05 &&
+        row.meanVelocityMs <= 3 &&
+        Number.isFinite(row.weightKg) &&
+        row.weightKg > 0,
+    );
 }
 
 // ---------------------------------------------------------------------------
