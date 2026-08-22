@@ -6,8 +6,10 @@ export type Point = { x: number; y: number };
 export type RepMetric = {
   repNumber: number;
   repTimeSec: number;
-  peakVelocity: number;
-  meanVelocity: number;
+  peakVelocity: number | null;
+  meanVelocity: number | null;
+  measurementStatus?: 'MEASURED' | 'UNAVAILABLE';
+  unavailableReason?: string;
 };
 
 export type SetSummary = {
@@ -23,11 +25,13 @@ export type SetSummary = {
   confidence?: 'HIGH' | 'MEDIUM' | 'LOW';
   inferenceSource?: 'IMU' | 'MANUAL' | 'DEMO';
   limitations?: string[];
+  measurementStatus?: 'MEASURED' | 'UNAVAILABLE' | 'REHEARSAL';
+  unavailableReason?: string;
 };
 
 export type TrackerSnapshot = {
   reps: RepMetric[];
-  currentVelocity: number;
+  currentVelocity: number | null;
   displacement: number;
   phase: TrackerPhase;
   centroid: Point | null;
@@ -37,7 +41,7 @@ export type TrackerSnapshot = {
 
 export interface ExerciseTrackerEngine {
   readonly reps: RepMetric[];
-  readonly currentVelocity: number;
+  readonly currentVelocity: number | null;
   readonly displacement: number;
   readonly phase: TrackerPhase;
   readonly centroid: Point | null;
@@ -49,7 +53,9 @@ export interface ExerciseTrackerEngine {
     height: number,
     dt: number,
   ): TrackerSnapshot;
-  updateImu(accelY: number, dt: number): TrackerSnapshot;
+  updateImu(accelMs2: number, timestampMs: number): TrackerSnapshot;
+  calibrateImu(restSamplesMs2: number[]): boolean;
+  readonly calibrated: boolean;
   manualIncrementRep(): TrackerSnapshot;
   reset(): TrackerSnapshot;
   calibratePlate(observedPx: number): boolean;
@@ -316,7 +322,7 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
   private metersPerPixel = PLATE_DIAMETER_M / DEFAULT_PLATE_PX;
   private phaseValue: TrackerPhase = 'IDLE';
   private repsValue: RepMetric[] = [];
-  private velocityValue = 0;
+  private velocityValue: number | null = null;
   private displacementValue = 0;
   private centroidValue: Point | null = null;
   private trajectoryValue: Point[] = [];
@@ -327,6 +333,12 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
   private activeSeconds = 0;
   private lastRepAt = 0;
   private idleFrameCounter = 0;
+  private calibratedValue = false;
+  private gravityBaselineMs2 = 0;
+  private lastImuTimestampMs: number | null = null;
+  private filteredAccelMs2 = 0;
+  private repVelocitySamples: number[] = [];
+  private repStartSeconds = 0;
 
   constructor(mode: TrackerMode) {
     this.mode = mode;
@@ -334,6 +346,7 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
 
   get reps() { return this.repsValue; }
   get currentVelocity() { return this.velocityValue; }
+  get calibrated() { return this.calibratedValue; }
   get displacement() { return this.displacementValue; }
   get phase() { return this.phaseValue; }
   get centroid() { return this.centroidValue; }
@@ -370,6 +383,7 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
         this.kalman.measurePosition(this.displacementValue);
       }
       this.previousFrame = rgba.slice();
+      this.velocityValue = this.kalman.values().velocity;
     }
     if (this.phaseValue === 'IDLE') {
       this.idleFrameCounter++;
@@ -381,15 +395,61 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
     return this.snapshot();
   }
 
-  updateImu(accelY: number, dt: number) {
+  calibrateImu(restSamplesMs2: number[]) {
+    if (restSamplesMs2.length < 20 || restSamplesMs2.some((value) => !Number.isFinite(value))) {
+      return false;
+    }
+    const mean = restSamplesMs2.reduce((sum, value) => sum + value, 0) / restSamplesMs2.length;
+    const varianceValue = variance(restSamplesMs2);
+    if (!Number.isFinite(mean) || varianceValue > 0.35 ** 2) return false;
+    this.gravityBaselineMs2 = mean;
+    this.calibratedValue = true;
+    this.lastImuTimestampMs = null;
+    this.filteredAccelMs2 = 0;
+    this.velocityValue = 0;
+    return true;
+  }
+
+  updateImu(accelMs2: number, timestampMs: number) {
     if (this.phaseValue === 'COOLDOWN') return this.snapshot();
-    this.kalman.predict(accelY, dt);
-    const values = this.kalman.values();
-    this.velocityValue = values.velocity;
-    this.displacementValue = values.position;
-    const motion = Math.abs(accelY) > MOTION_SPIKE_THRESHOLD ? Math.abs(accelY) : 0;
-    if (this.phaseValue === 'IDLE' && motion > MOTION_SPIKE_THRESHOLD) {
+    if (!this.calibratedValue || !Number.isFinite(accelMs2) || !Number.isFinite(timestampMs)) {
+      this.velocityValue = null;
+      return this.snapshot();
+    }
+    if (this.lastImuTimestampMs === null) {
+      this.lastImuTimestampMs = timestampMs;
+      return this.snapshot();
+    }
+    const dt = (timestampMs - this.lastImuTimestampMs) / 1000;
+    this.lastImuTimestampMs = timestampMs;
+    if (dt <= 0 || dt > 0.25) {
+      this.velocityValue = 0;
+      this.filteredAccelMs2 = 0;
+      this.kalman.reset();
+      return this.snapshot();
+    }
+
+    const residual = accelMs2 - this.gravityBaselineMs2;
+    this.filteredAccelMs2 = this.filteredAccelMs2 * 0.8 + residual * 0.2;
+    const motion = Math.abs(this.filteredAccelMs2) > 0.45 ? Math.abs(this.filteredAccelMs2) : 0;
+    if (motion > 0) {
+      const previousVelocity = this.velocityValue ?? 0;
+      this.velocityValue = clamp(
+        previousVelocity + this.filteredAccelMs2 * dt,
+        -4,
+        4,
+      );
+      this.displacementValue += ((previousVelocity + this.velocityValue) / 2) * dt;
+    } else {
+      this.velocityValue = Math.abs(this.velocityValue ?? 0) < 0.04
+        ? 0
+        : (this.velocityValue ?? 0) * Math.exp(-8 * dt);
+    }
+
+    if (this.phaseValue === 'IDLE' && motion > 0) {
       this.phaseValue = 'ACTIVE';
+      this.activeSeconds = 0;
+      this.repStartSeconds = 0;
     }
     this.advancePhase(motion, dt);
     return this.snapshot();
@@ -399,6 +459,7 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
     if (this.phaseValue !== 'ACTIVE') return;
     this.activeSeconds += dt;
     const velocity = this.velocityValue;
+    if (velocity === null) return;
     const crossedBottom =
       this.activeSeconds > 0.12 &&
       Math.abs(velocity) > MIN_REP_VELOCITY &&
@@ -418,24 +479,40 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
       this.stillnessSeconds = 0;
     }
     if (this.stillnessSeconds >= STILLNESS_SECONDS) {
-      this.phaseValue = 'COOLDOWN';
-      this.completedSetValue = this.finalizeSet();
+      if (this.repsValue.length > 0) {
+        this.phaseValue = 'COOLDOWN';
+        this.completedSetValue = this.finalizeSet();
+      } else {
+        this.phaseValue = 'IDLE';
+        this.activeSeconds = 0;
+        this.velocityValue = 0;
+      }
     }
   }
 
   private completeRep() {
-    const repTimeSec = Math.max(0.05, this.activeSeconds - this.lastRepAt);
-    const peakVelocity = Math.abs(this.velocityValue);
+    if (this.repVelocitySamples.length < 4) return;
+    const repTimeSec = this.activeSeconds - this.repStartSeconds;
+    if (repTimeSec < 0.4 || repTimeSec > 8) {
+      this.repVelocitySamples = [];
+      this.repStartSeconds = this.activeSeconds;
+      return;
+    }
+    const peakVelocity = Math.max(...this.repVelocitySamples);
+    const meanVelocity = this.repVelocitySamples.reduce((sum, value) => sum + value, 0) / this.repVelocitySamples.length;
     this.repsValue = [
       ...this.repsValue,
       {
         repNumber: this.repsValue.length + 1,
         repTimeSec,
         peakVelocity,
-        meanVelocity: peakVelocity / 2,
+        meanVelocity,
+        measurementStatus: 'MEASURED',
       },
     ];
     this.lastRepAt = this.activeSeconds;
+    this.repVelocitySamples = [];
+    this.repStartSeconds = this.activeSeconds;
   }
 
   private finalizeSet(): SetSummary {
@@ -459,16 +536,25 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
   }
 
   manualIncrementRep() {
-    if (this.phaseValue === 'COOLDOWN') return this.snapshot();
-    if (this.phaseValue === 'IDLE') this.phaseValue = 'ACTIVE';
-    this.completeRep();
     return this.snapshot();
   }
 
   stopSet() {
     if (this.phaseValue === 'COOLDOWN') return this.snapshot();
     this.phaseValue = 'COOLDOWN';
-    this.completedSetValue = this.finalizeSet();
+    this.completedSetValue = this.repsValue.length > 0
+      ? this.finalizeSet()
+      : {
+          reps: [],
+          meanRepTime: 0,
+          topSpeed: 0,
+          peakVelocities: [],
+          consistencyScore: 0,
+          measurementStatus: 'UNAVAILABLE',
+          unavailableReason: this.calibratedValue
+            ? 'No complete movement cycle was detected.'
+            : 'IMU rest calibration is required before recording.',
+        };
     return this.snapshot();
   }
 
@@ -501,6 +587,10 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
     this.activeSeconds = 0;
     this.lastRepAt = 0;
     this.idleFrameCounter = 0;
+    this.lastImuTimestampMs = null;
+    this.filteredAccelMs2 = 0;
+    this.repVelocitySamples = [];
+    this.repStartSeconds = 0;
     this.kalman.reset();
     return this.snapshot();
   }
