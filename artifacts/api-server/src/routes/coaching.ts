@@ -36,7 +36,8 @@ type DisplayUnit = "imperial" | "metric";
 /**
  * Extract the scalar "motion" acceleration from a sample, gravity-corrected.
  *
- * weight_stack / barbell: vertical Z-axis only (linear machine/bar path).
+ * weight_stack: vertical Z-axis only (linear machine path).
+ * barbell: mobile contract uses a barbell-mounted phone's Y axis.
  * pocket: root-mean-square of all three axes minus 1 G gravity baseline.
  *   The gravity component direction is unknown when the phone is in a pocket,
  *   so we subtract the per-axis baseline from sample[0] and use the residual
@@ -54,7 +55,10 @@ function extractAccel(
     const sign = dz >= 0 ? 1 : -1;
     return sign * Math.sqrt(dx * dx + dy * dy + dz * dz);
   }
-  // weight_stack or barbell — Z-axis (gravity-corrected)
+  if (placement === "barbell") {
+    return curr.y - baseline.y;
+  }
+  // weight_stack — Z-axis (gravity-corrected)
   return curr.z - baseline.z;
 }
 
