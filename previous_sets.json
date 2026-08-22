@@ -1,0 +1,462 @@
+[
+  {
+    "exercise": "squat",
+    "loadKg": 60,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.6,
+      "velocityLossPct": 14,
+      "meanRepTime": 1.45
+    },
+    "personalBaseline": {
+      "sampleCount": 9,
+      "firstRepVelocity": 0.61,
+      "velocityLossPct": 12,
+      "meanRepTime": 1.42
+    },
+    "deviations": [
+      { "metric": "firstRepVelocity", "changePct": -1.6, "confidence": 0.92 }
+    ],
+    "recommendedAction": "maintain_load"
+  },
+  {
+    "exercise": "squat",
+    "loadKg": 60,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.58,
+      "velocityLossPct": 18,
+      "meanRepTime": 1.51
+    },
+    "personalBaseline": {
+      "sampleCount": 10,
+      "firstRepVelocity": 0.61,
+      "velocityLossPct": 12,
+      "meanRepTime": 1.42
+    },
+    "deviations": [
+      { "metric": "velocityLossPct", "changePct": 50.0, "confidence": 0.88 }
+    ],
+    "recommendedAction": "maintain_load"
+  },
+  {
+    "exercise": "squat",
+    "loadKg": 60,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.51,
+      "velocityLossPct": 26,
+      "meanRepTime": 1.7
+    },
+    "personalBaseline": {
+      "sampleCount": 11,
+      "firstRepVelocity": 0.61,
+      "velocityLossPct": 12,
+      "meanRepTime": 1.43
+    },
+    "deviations": [
+      { "metric": "velocityLossPct", "changePct": 116.6, "confidence": 0.91 }
+    ],
+    "recommendedAction": "rest_longer_or_reduce_load"
+  },
+  {
+    "exercise": "squat",
+    "loadKg": 62.5,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.59,
+      "velocityLossPct": 13,
+      "meanRepTime": 1.48
+    },
+    "personalBaseline": {
+      "sampleCount": 12,
+      "firstRepVelocity": 0.6,
+      "velocityLossPct": 13,
+      "meanRepTime": 1.44
+    },
+    "deviations": [
+      { "metric": "firstRepVelocity", "changePct": -1.6, "confidence": 0.85 }
+    ],
+    "recommendedAction": "maintain_load"
+  },
+  {
+    "exercise": "squat",
+    "loadKg": 62.5,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.58,
+      "velocityLossPct": 15,
+      "meanRepTime": 1.5
+    },
+    "personalBaseline": {
+      "sampleCount": 13,
+      "firstRepVelocity": 0.6,
+      "velocityLossPct": 13,
+      "meanRepTime": 1.44
+    },
+    "deviations": [
+      { "metric": "meanRepTime", "changePct": 4.1, "confidence": 0.79 }
+    ],
+    "recommendedAction": "maintain_load"
+  },
+  {
+    "exercise": "squat",
+    "loadKg": 62.5,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.55,
+      "velocityLossPct": 19,
+      "meanRepTime": 1.58
+    },
+    "personalBaseline": {
+      "sampleCount": 14,
+      "firstRepVelocity": 0.59,
+      "velocityLossPct": 14,
+      "meanRepTime": 1.45
+    },
+    "deviations": [
+      { "metric": "velocityLossPct", "changePct": 35.7, "confidence": 0.82 }
+    ],
+    "recommendedAction": "maintain_load"
+  },
+  {
+    "exercise": "squat",
+    "loadKg": 62.5,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.5,
+      "velocityLossPct": 24,
+      "meanRepTime": 1.72
+    },
+    "personalBaseline": {
+      "sampleCount": 15,
+      "firstRepVelocity": 0.59,
+      "velocityLossPct": 14,
+      "meanRepTime": 1.46
+    },
+    "deviations": [
+      { "metric": "meanRepTime", "changePct": 17.8, "confidence": 0.89 }
+    ],
+    "recommendedAction": "rest_longer_or_reduce_load"
+  },
+  {
+    "exercise": "squat",
+    "loadKg": 65,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.57,
+      "velocityLossPct": 12,
+      "meanRepTime": 1.52
+    },
+    "personalBaseline": {
+      "sampleCount": 16,
+      "firstRepVelocity": 0.58,
+      "velocityLossPct": 15,
+      "meanRepTime": 1.48
+    },
+    "deviations": [
+      { "metric": "firstRepVelocity", "changePct": -1.7, "confidence": 0.81 }
+    ],
+    "recommendedAction": "maintain_load"
+  },
+  {
+    "exercise": "squat",
+    "loadKg": 65,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.56,
+      "velocityLossPct": 14,
+      "meanRepTime": 1.55
+    },
+    "personalBaseline": {
+      "sampleCount": 17,
+      "firstRepVelocity": 0.58,
+      "velocityLossPct": 15,
+      "meanRepTime": 1.48
+    },
+    "deviations": [
+      { "metric": "velocityLossPct", "changePct": -6.6, "confidence": 0.77 }
+    ],
+    "recommendedAction": "maintain_load"
+  },
+  {
+    "exercise": "squat",
+    "loadKg": 65,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.54,
+      "velocityLossPct": 20,
+      "meanRepTime": 1.62
+    },
+    "personalBaseline": {
+      "sampleCount": 18,
+      "firstRepVelocity": 0.57,
+      "velocityLossPct": 15,
+      "meanRepTime": 1.49
+    },
+    "deviations": [
+      { "metric": "velocityLossPct", "changePct": 33.3, "confidence": 0.84 }
+    ],
+    "recommendedAction": "maintain_load"
+  },
+  {
+    "exercise": "squat",
+    "loadKg": 65,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.49,
+      "velocityLossPct": 27,
+      "meanRepTime": 1.78
+    },
+    "personalBaseline": {
+      "sampleCount": 19,
+      "firstRepVelocity": 0.57,
+      "velocityLossPct": 16,
+      "meanRepTime": 1.5
+    },
+    "deviations": [
+      { "metric": "firstRepVelocity", "changePct": -14.0, "confidence": 0.93 }
+    ],
+    "recommendedAction": "rest_longer_or_reduce_load"
+  },
+  {
+    "exercise": "squat",
+    "loadKg": 65,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.58,
+      "velocityLossPct": 11,
+      "meanRepTime": 1.5
+    },
+    "personalBaseline": {
+      "sampleCount": 20,
+      "firstRepVelocity": 0.57,
+      "velocityLossPct": 16,
+      "meanRepTime": 1.51
+    },
+    "deviations": [
+      { "metric": "firstRepVelocity", "changePct": 1.7, "confidence": 0.8 }
+    ],
+    "recommendedAction": "increase_load"
+  },
+  {
+    "exercise": "squat",
+    "loadKg": 67.5,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.54,
+      "velocityLossPct": 15,
+      "meanRepTime": 1.59
+    },
+    "personalBaseline": {
+      "sampleCount": 21,
+      "firstRepVelocity": 0.57,
+      "velocityLossPct": 16,
+      "meanRepTime": 1.52
+    },
+    "deviations": [
+      { "metric": "firstRepVelocity", "changePct": -5.2, "confidence": 0.86 }
+    ],
+    "recommendedAction": "maintain_load"
+  },
+  {
+    "exercise": "squat",
+    "loadKg": 67.5,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.52,
+      "velocityLossPct": 18,
+      "meanRepTime": 1.64
+    },
+    "personalBaseline": {
+      "sampleCount": 22,
+      "firstRepVelocity": 0.56,
+      "velocityLossPct": 16,
+      "meanRepTime": 1.53
+    },
+    "deviations": [
+      { "metric": "velocityLossPct", "changePct": 12.5, "confidence": 0.78 }
+    ],
+    "recommendedAction": "maintain_load"
+  },
+  {
+    "exercise": "squat",
+    "loadKg": 67.5,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.48,
+      "velocityLossPct": 23,
+      "meanRepTime": 1.73
+    },
+    "personalBaseline": {
+      "sampleCount": 23,
+      "firstRepVelocity": 0.56,
+      "velocityLossPct": 16,
+      "meanRepTime": 1.53
+    },
+    "deviations": [
+      { "metric": "meanRepTime", "changePct": 13.0, "confidence": 0.87 }
+    ],
+    "recommendedAction": "rest_longer_or_reduce_load"
+  },
+  {
+    "exercise": "squat",
+    "loadKg": 67.5,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.55,
+      "velocityLossPct": 13,
+      "meanRepTime": 1.56
+    },
+    "personalBaseline": {
+      "sampleCount": 24,
+      "firstRepVelocity": 0.56,
+      "velocityLossPct": 17,
+      "meanRepTime": 1.54
+    },
+    "deviations": [
+      { "metric": "velocityLossPct", "changePct": -23.5, "confidence": 0.83 }
+    ],
+    "recommendedAction": "excellent_form_continue"
+  },
+  {
+    "exercise": "squat",
+    "loadKg": 70,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.53,
+      "velocityLossPct": 15,
+      "meanRepTime": 1.61
+    },
+    "personalBaseline": {
+      "sampleCount": 25,
+      "firstRepVelocity": 0.55,
+      "velocityLossPct": 17,
+      "meanRepTime": 1.55
+    },
+    "deviations": [
+      { "metric": "firstRepVelocity", "changePct": -3.6, "confidence": 0.81 }
+    ],
+    "recommendedAction": "maintain_load"
+  },
+  {
+    "exercise": "squat",
+    "loadKg": 70,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.51,
+      "velocityLossPct": 19,
+      "meanRepTime": 1.67
+    },
+    "personalBaseline": {
+      "sampleCount": 26,
+      "firstRepVelocity": 0.55,
+      "velocityLossPct": 17,
+      "meanRepTime": 1.55
+    },
+    "deviations": [
+      { "metric": "velocityLossPct", "changePct": 11.7, "confidence": 0.76 }
+    ],
+    "recommendedAction": "maintain_load"
+  },
+  {
+    "exercise": "squat",
+    "loadKg": 70,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.47,
+      "velocityLossPct": 26,
+      "meanRepTime": 1.79
+    },
+    "personalBaseline": {
+      "sampleCount": 27,
+      "firstRepVelocity": 0.54,
+      "velocityLossPct": 17,
+      "meanRepTime": 1.56
+    },
+    "deviations": [
+      { "metric": "firstRepVelocity", "changePct": -12.9, "confidence": 0.9 }
+    ],
+    "recommendedAction": "rest_longer_or_reduce_load"
+  },
+  {
+    "exercise": "squat",
+    "loadKg": 70,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.54,
+      "velocityLossPct": 14,
+      "meanRepTime": 1.58
+    },
+    "personalBaseline": {
+      "sampleCount": 28,
+      "firstRepVelocity": 0.54,
+      "velocityLossPct": 17,
+      "meanRepTime": 1.57
+    },
+    "deviations": [
+      { "metric": "velocityLossPct", "changePct": -17.6, "confidence": 0.85 }
+    ],
+    "recommendedAction": "excellent_form_continue"
+  },
+  {
+    "exercise": "squat",
+    "loadKg": 72.5,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.51,
+      "velocityLossPct": 16,
+      "meanRepTime": 1.64
+    },
+    "personalBaseline": {
+      "sampleCount": 29,
+      "firstRepVelocity": 0.54,
+      "velocityLossPct": 17,
+      "meanRepTime": 1.57
+    },
+    "deviations": [
+      { "metric": "firstRepVelocity", "changePct": -5.5, "confidence": 0.82 }
+    ],
+    "recommendedAction": "maintain_load"
+  },
+  {
+    "exercise": "squat",
+    "loadKg": 72.5,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.49,
+      "velocityLossPct": 20,
+      "meanRepTime": 1.71
+    },
+    "personalBaseline": {
+      "sampleCount": 30,
+      "firstRepVelocity": 0.53,
+      "velocityLossPct": 17,
+      "meanRepTime": 1.58
+    },
+    "deviations": [
+      { "metric": "velocityLossPct", "changePct": 17.6, "confidence": 0.79 }
+    ],
+    "recommendedAction": "maintain_load"
+  },
+  {
+    "exercise": "squat",
+    "loadKg": 72.5,
+    "currentSet": {
+      "reps": 5,
+      "firstRepVelocity": 0.45,
+      "velocityLossPct": 29,
+      "meanRepTime": 1.85
+    },
+    "personalBaseline": {
+      "sampleCount": 31,
+      "firstRepVelocity": 0.53,
+      "velocityLossPct": 17,
+      "meanRepTime": 1.59
+    },
+    "deviations": [
+      { "metric": "meanRepTime", "changePct": 16.3, "confidence": 0.94 }
+    ],
+    "recommendedAction": "rest_longer_or_reduce_load"
+  }
+]
