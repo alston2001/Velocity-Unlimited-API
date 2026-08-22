@@ -312,7 +312,14 @@ router.post("/analyze-set", async (req, res) => {
     return;
   }
 
-  const { exercise_name, weight_kg, target_reps, total_sets, samples } = parsed.data;
+  const {
+    exercise_name,
+    weight_kg,
+    target_reps,
+    total_sets,
+    samples,
+    measurement_source,
+  } = parsed.data;
   const exerciseName = exercise_name.trim().replace(/\s+/g, " ");
   const exerciseIdentity = canonicalizeExerciseName(exerciseName);
   if (!exerciseName) {
@@ -444,6 +451,10 @@ router.post("/analyze-set", async (req, res) => {
     await db.insert(setsTable).values({
       exerciseName: exerciseIdentity,
       weightKg: weight_kg,
+      measurementSource: measurement_source,
+      provenance: measurement_source === "mobile_imu"
+        ? "calibrated mobile IMU batch accepted by /analyze-set"
+        : "declared test fixture batch accepted by /analyze-set",
       targetReps: target_reps,
       actualReps,
       meanVelocityMs: Math.round(mean * 1000) / 1000,
@@ -464,6 +475,8 @@ router.post("/analyze-set", async (req, res) => {
   res.json({
     status: "success",
     exercise_name: exerciseName,
+    weight_kg,
+    measurement_source,
     mean_velocity_ms: Math.round(mean * 1000) / 1000,
     peak_velocity_ms: Math.round(peak * 1000) / 1000,
     first_rep_peak_ms: firstRepPeakMs !== null ? Math.round(firstRepPeakMs * 1000) / 1000 : null,
@@ -486,6 +499,18 @@ router.post("/analyze-set", async (req, res) => {
     historical_comparison_delta_pct: historicalComparison.deltaPct,
     historical_baseline_velocity_ms: historicalComparison.baselineMeanVelocityMs,
     historical_comparison_data_points: historicalComparison.dataPoints,
+    readiness_data_source: readinessResult.dataPoints > 0
+      ? "persisted_measured_sets"
+      : "no_trusted_persisted_history",
+    readiness_evidence: readinessResult.matchedHistory.map((row) => ({
+      id: row.id,
+      created_at: row.createdAt,
+      exercise_name: exerciseName,
+      weight_kg: row.weightKg,
+      mean_velocity_ms: row.meanVelocityMs,
+      first_rep_peak_ms: row.firstRepPeakMs,
+      measurement_source: row.measurementSource,
+    })),
     diary_context_available: diaryContext !== null,
     diary_context: diaryContext,
   });

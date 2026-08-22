@@ -34,6 +34,7 @@ export const analyzeSetBodyPhonePlacementDefault = `weight_stack`;
 export const AnalyzeSetBody = zod.object({
   "exercise_name": zod.string().min(1).describe('Name of the exercise (e.g. \"Bench Press\")'),
   "weight_kg": zod.number().describe('Load on the bar in kilograms'),
+  "measurement_source": zod.enum(['mobile_imu', 'test_fixture']).describe('Provenance declaration for the batch; only mobile_imu rows can contribute to readiness'),
   "display_unit": zod.enum(['imperial', 'metric']).default(analyzeSetBodyDisplayUnitDefault).describe('User-facing mass unit used for load labels and coaching copy'),
   "display_load": zod.number().optional().describe('User-entered load in display_unit; weight_kg remains canonical'),
   "target_reps": zod.int().describe('Planned rep count for the set'),
@@ -50,6 +51,8 @@ export const AnalyzeSetBody = zod.object({
 export const AnalyzeSetResponse = zod.object({
   "status": zod.enum(['success']),
   "exercise_name": zod.string(),
+  "weight_kg": zod.number().describe('Canonical current-set load used to select the ±15% load-match band'),
+  "measurement_source": zod.enum(['mobile_imu', 'test_fixture']).describe('Declared current-set batch provenance; test_fixture rows are retained but excluded from readiness'),
   "mean_velocity_ms": zod.number().describe('Mean bar velocity in m\/s integrated from the acceleration batch'),
   "peak_velocity_ms": zod.number().describe('Peak bar velocity in m\/s'),
   "first_rep_peak_ms": zod.number().nullable().describe('First-rep peak velocity in m\/s — primary CNS readiness marker. Null when fewer than 1 rep detected.'),
@@ -72,6 +75,16 @@ export const AnalyzeSetResponse = zod.object({
   "historical_comparison_delta_pct": zod.number().nullable().describe('Current mean velocity deviation from the load-matched historical baseline (%)'),
   "historical_baseline_velocity_ms": zod.number().nullable().describe('Load-matched historical mean-velocity baseline in m\/s'),
   "historical_comparison_data_points": zod.int().describe('Number of historical load-matched sessions used for the comparison'),
+  "readiness_data_source": zod.enum(['persisted_measured_sets', 'no_trusted_persisted_history']).describe('Whether readiness used prior persisted mobile IMU rows'),
+  "readiness_evidence": zod.array(zod.object({
+  "id": zod.uuid(),
+  "created_at": zod.coerce.date(),
+  "exercise_name": zod.string(),
+  "weight_kg": zod.number(),
+  "mean_velocity_ms": zod.number(),
+  "first_rep_peak_ms": zod.number().nullable(),
+  "measurement_source": zod.enum(['mobile_imu'])
+})).describe('Prior trusted rows matched by exercise and load; the current set is excluded because it is persisted after calculation'),
   "diary_context_available": zod.boolean().describe('Whether an optional diary sentiment context was available for this set date'),
   "diary_context": zod.string().nullable().describe('Non-clinical sentiment context only; does not contain the raw diary note')
 })

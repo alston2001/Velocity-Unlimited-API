@@ -291,6 +291,10 @@ components:
         weight_kg:
           type: number
           description: Load on the bar in kilograms
+        measurement_source:
+          type: string
+          enum: [mobile_imu, test_fixture]
+          description: Provenance declaration for the batch; only mobile_imu rows can contribute to readiness
         display_unit:
           type: string
           enum: [imperial, metric]
@@ -321,6 +325,7 @@ components:
         - target_reps
         - total_sets
         - samples
+        - measurement_source
     SetAnalysisResult:
       type: object
       properties:
@@ -329,6 +334,13 @@ components:
           enum: [success]
         exercise_name:
           type: string
+        weight_kg:
+          type: number
+          description: Canonical current-set load used to select the ±15% load-match band
+        measurement_source:
+          type: string
+          enum: [mobile_imu, test_fixture]
+          description: Declared current-set batch provenance; test_fixture rows are retained but excluded from readiness
         mean_velocity_ms:
           type: number
           description: Mean bar velocity in m/s integrated from the acceleration batch
@@ -406,6 +418,15 @@ components:
         historical_comparison_data_points:
           type: integer
           description: Number of historical load-matched sessions used for the comparison
+        readiness_data_source:
+          type: string
+          enum: [persisted_measured_sets, no_trusted_persisted_history]
+          description: Whether readiness used prior persisted mobile IMU rows
+        readiness_evidence:
+          type: array
+          description: Prior trusted rows matched by exercise and load; the current set is excluded because it is persisted after calculation
+          items:
+            $ref: "#/components/schemas/ReadinessEvidence"
         diary_context_available:
           type: boolean
           description: Whether an optional diary sentiment context was available for this set date
@@ -416,6 +437,8 @@ components:
       required:
         - status
         - exercise_name
+        - weight_kg
+        - measurement_source
         - mean_velocity_ms
         - peak_velocity_ms
         - first_rep_peak_ms
@@ -438,6 +461,8 @@ components:
         - historical_comparison_delta_pct
         - historical_baseline_velocity_ms
         - historical_comparison_data_points
+        - readiness_data_source
+        - readiness_evidence
         - diary_context_available
         - diary_context
     DemoHistoricalSet:
@@ -483,3 +508,32 @@ components:
         - displacementM
         - source
         - provenance
+    ReadinessEvidence:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        exercise_name:
+          type: string
+        weight_kg:
+          type: number
+        mean_velocity_ms:
+          type: number
+        first_rep_peak_ms:
+          type: number
+          nullable: true
+        measurement_source:
+          type: string
+          enum: [mobile_imu]
+      required:
+        - id
+        - created_at
+        - exercise_name
+        - weight_kg
+        - mean_velocity_ms
+        - first_rep_peak_ms
+        - measurement_source

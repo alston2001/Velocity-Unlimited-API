@@ -5,11 +5,18 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { ReadinessEvidence } from './readinessEvidence';
+import type { SetAnalysisResultMeasurementSource } from './setAnalysisResultMeasurementSource';
+import type { SetAnalysisResultReadinessDataSource } from './setAnalysisResultReadinessDataSource';
 import type { SetAnalysisResultStatus } from './setAnalysisResultStatus';
 
 export interface SetAnalysisResult {
   status: SetAnalysisResultStatus;
   exercise_name: string;
+  /** Canonical current-set load used to select the ±15% load-match band */
+  weight_kg: number;
+  /** Declared current-set batch provenance; test_fixture rows are retained but excluded from readiness */
+  measurement_source: SetAnalysisResultMeasurementSource;
   /** Mean bar velocity in m/s integrated from the acceleration batch */
   mean_velocity_ms: number;
   /** Peak bar velocity in m/s */
@@ -54,6 +61,10 @@ export interface SetAnalysisResult {
   historical_baseline_velocity_ms: number | null;
   /** Number of historical load-matched sessions used for the comparison */
   historical_comparison_data_points: number;
+  /** Whether readiness used prior persisted mobile IMU rows */
+  readiness_data_source: SetAnalysisResultReadinessDataSource;
+  /** Prior trusted rows matched by exercise and load; the current set is excluded because it is persisted after calculation */
+  readiness_evidence: ReadinessEvidence[];
   /** Whether an optional diary sentiment context was available for this set date */
   diary_context_available: boolean;
   /** Non-clinical sentiment context only; does not contain the raw diary note */

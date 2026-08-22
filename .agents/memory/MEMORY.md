@@ -2,5 +2,6 @@
 - [Coaching comparisons](coaching-comparisons.md) — coach output remains actionable with an evidence-based fallback and selected-exercise, load-matched velocity comparison.
 - [Lib build order](lib-build-order.md) — after codegen, build in order: api-zod → api-client-react → integrations-openai-ai-server (independent), then typecheck consumers.
 - [CNS readiness architecture](cns-readiness-arch.md) — first-rep peak vs 21-day load-matched baseline; sets persisted to DB; ReadinessCard in mobile feedback phase.
+- [Readiness provenance](readiness-provenance.md) — only explicitly measured mobile IMU batches enter the baseline; unknown legacy rows remain excluded.
 - [Phone placement architecture](phone-placement-arch.md) — weight_stack/barbell use Z-axis; pocket uses 3-axis RMS magnitude; flows setup form → API → integrateVelocity → AI prompt.
 - [OpenAI output limits](openai-output-limit.md) — Luna may reject small completion caps; keep the budget generous and constrain response length in the prompt.

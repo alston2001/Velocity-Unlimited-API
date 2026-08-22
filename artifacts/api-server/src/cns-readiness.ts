@@ -27,7 +27,7 @@
  */
 
 import { db, setsTable } from "@workspace/db";
-import { and, desc, gte, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -58,6 +58,8 @@ export interface ReadinessReport {
 }
 
 export interface HistoricalSetRow {
+  id: string;
+  createdAt: string;
   date: string;
   meanVelocityMs: number;
   peakVelocityMs: number;
@@ -67,6 +69,8 @@ export interface HistoricalSetRow {
   actualReps: number;
   velocityLossPct: number | null;
   fatigueLevel: string | null;
+  measurementSource: string;
+  provenance: string;
 }
 
 /** Case- and whitespace-stable identity for exercise-specific history queries. */
@@ -88,6 +92,19 @@ const MIN_SESSIONS = 3;
 const TREND_SESSIONS = 5;
 /** Session-to-session slope threshold to call a trend Rising or Declining (%). */
 const TREND_THRESHOLD_PCT = 3;
+export const TRUSTED_MEASUREMENT_SOURCE = "mobile_imu";
+
+/**
+ * Test fixtures, imports, and legacy rows can be retained for auditability,
+ * but must never become an implicit readiness baseline.
+ */
+export function filterTrustedReadinessHistory(
+  history: HistoricalSetRow[],
+): HistoricalSetRow[] {
+  return history.filter(
+    (row) => row.measurementSource === TRUSTED_MEASUREMENT_SOURCE,
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -141,12 +158,15 @@ async function fetchHistory(
       and(
         sql`lower(trim(${setsTable.exerciseName})) = ${canonicalizeExerciseName(exerciseName)}`,
         gte(setsTable.createdAt, since),
+        eq(setsTable.measurementSource, TRUSTED_MEASUREMENT_SOURCE),
       ),
     )
     .orderBy(desc(setsTable.createdAt));
 
   return rows
     .map((r) => ({
+      id: r.id,
+      createdAt: r.createdAt.toISOString(),
       date: r.createdAt.toISOString().split("T")[0]!,
       meanVelocityMs: r.meanVelocityMs,
       peakVelocityMs: r.peakVelocityMs,
@@ -156,6 +176,8 @@ async function fetchHistory(
       actualReps: r.actualReps,
       velocityLossPct: r.velocityLossPct ?? null,
       fatigueLevel: r.fatigueLevel ?? null,
+      measurementSource: r.measurementSource,
+      provenance: r.provenance,
     }))
     .filter(
       (row) =>
@@ -165,6 +187,75 @@ async function fetchHistory(
         Number.isFinite(row.weightKg) &&
         row.weightKg > 0,
     );
+}
+
+export function selectLoadMatchedHistory(
+  history: HistoricalSetRow[],
+  currentWeightKg: number,
+): HistoricalSetRow[] {
+  const loadMin = currentWeightKg * (1 - LOAD_MATCH_BAND);
+  const loadMax = currentWeightKg * (1 + LOAD_MATCH_BAND);
+  return history.filter((row) => row.weightKg >= loadMin && row.weightKg <= loadMax);
+}
+
+export function computeReadinessFromHistory(
+  allHistory: HistoricalSetRow[],
+  currentWeightKg: number,
+  currentFirstRepPeakMs: number | null,
+): ReadinessReport & { history: HistoricalSetRow[]; matchedHistory: HistoricalSetRow[] } {
+  const trustedHistory = filterTrustedReadinessHistory(allHistory);
+  const matched = selectLoadMatchedHistory(trustedHistory, currentWeightKg);
+  const dataPoints = matched.length;
+
+  // Trend is useful as a descriptive signal even before a score is possible.
+  const trendSource = matched.length >= MIN_SESSIONS ? matched : trustedHistory;
+  const trendVels = trendSource
+    .slice(0, TREND_SESSIONS)
+    .reverse()
+    .map((r) => r.meanVelocityMs);
+  const trend = classifyTrend(trendVels);
+
+  if (
+    dataPoints < MIN_SESSIONS ||
+    currentFirstRepPeakMs === null ||
+    currentFirstRepPeakMs < 0.05
+  ) {
+    return {
+      score: null,
+      level: "Insufficient data",
+      trend,
+      dataPoints,
+      baselineVelocityMs: null,
+      history: trustedHistory,
+      matchedHistory: matched,
+    };
+  }
+
+  const withPeaks = matched.filter(
+    (r) => r.firstRepPeakMs !== null && r.firstRepPeakMs > 0.05,
+  );
+  const useFirstRep = withPeaks.length >= MIN_SESSIONS;
+  const baselineVelocityMs = useFirstRep
+    ? withPeaks.reduce((sum, row) => sum + row.firstRepPeakMs!, 0) / withPeaks.length
+    : matched.reduce((sum, row) => sum + row.meanVelocityMs, 0) / matched.length;
+  const ratio = currentFirstRepPeakMs / baselineVelocityMs;
+  const score = Math.min(100, Math.max(0, Math.round(ratio * 100)));
+
+  let level: MotorReadinessLevel;
+  if (score >= 95) level = "High";
+  else if (score >= 85) level = "Moderate";
+  else if (score >= 70) level = "Low";
+  else level = "Compromised";
+
+  return {
+    score,
+    level,
+    trend,
+    dataPoints,
+    baselineVelocityMs: Math.round(baselineVelocityMs * 1000) / 1000,
+    history: trustedHistory,
+    matchedHistory: matched,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -183,69 +274,9 @@ export async function computeReadiness(
   exerciseName: string,
   currentWeightKg: number,
   currentFirstRepPeakMs: number | null,
-): Promise<ReadinessReport & { history: HistoricalSetRow[] }> {
+): Promise<ReadinessReport & { history: HistoricalSetRow[]; matchedHistory: HistoricalSetRow[] }> {
   const allHistory = await fetchHistory(exerciseName, BASELINE_DAYS);
-
-  // Load-matched subset (±15%)
-  const loadMin = currentWeightKg * (1 - LOAD_MATCH_BAND);
-  const loadMax = currentWeightKg * (1 + LOAD_MATCH_BAND);
-  const matched = allHistory.filter(
-    (r) => r.weightKg >= loadMin && r.weightKg <= loadMax,
-  );
-
-  const dataPoints = matched.length;
-
-  // Determine trend regardless of whether we have enough for a score
-  // (use ALL load-matched history for trend; fall back to unmatched if needed)
-  const trendSource = matched.length >= 3 ? matched : allHistory;
-  const trendVels = trendSource
-    .slice(0, TREND_SESSIONS)
-    .reverse()
-    .map((r) => r.meanVelocityMs);
-  const trend = classifyTrend(trendVels);
-
-  // Insufficient data
-  if (
-    dataPoints < MIN_SESSIONS ||
-    currentFirstRepPeakMs === null ||
-    currentFirstRepPeakMs < 0.05
-  ) {
-    return {
-      score: null,
-      level: "Insufficient data",
-      trend,
-      dataPoints,
-      baselineVelocityMs: null,
-      history: allHistory,
-    };
-  }
-
-  // Baseline — prefer first-rep peaks, fall back to mean velocity
-  const withPeaks = matched.filter(
-    (r) => r.firstRepPeakMs !== null && r.firstRepPeakMs! > 0.05,
-  );
-  const useFirstRep = withPeaks.length >= MIN_SESSIONS;
-  const baselineVelocityMs = useFirstRep
-    ? withPeaks.reduce((s, r) => s + r.firstRepPeakMs!, 0) / withPeaks.length
-    : matched.reduce((s, r) => s + r.meanVelocityMs, 0) / matched.length;
-
-  const ratio = currentFirstRepPeakMs / baselineVelocityMs;
-  const score = Math.min(100, Math.max(0, Math.round(ratio * 100)));
-
-  let level: MotorReadinessLevel;
-  if (score >= 95) level = "High";
-  else if (score >= 85) level = "Moderate";
-  else if (score >= 70) level = "Low";
-  else level = "Compromised";
-
-  return {
-    score,
-    level,
-    trend,
-    dataPoints,
-    baselineVelocityMs: Math.round(baselineVelocityMs * 1000) / 1000,
-    history: allHistory,
-  };
+  return computeReadinessFromHistory(allHistory, currentWeightKg, currentFirstRepPeakMs);
 }
 
 /**

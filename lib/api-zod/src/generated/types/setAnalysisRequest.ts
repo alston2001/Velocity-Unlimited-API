@@ -7,6 +7,7 @@
  */
 import type { AccelerationSample } from './accelerationSample';
 import type { SetAnalysisRequestDisplayUnit } from './setAnalysisRequestDisplayUnit';
+import type { SetAnalysisRequestMeasurementSource } from './setAnalysisRequestMeasurementSource';
 import type { SetAnalysisRequestPhonePlacement } from './setAnalysisRequestPhonePlacement';
 
 /**
@@ -20,6 +21,8 @@ export interface SetAnalysisRequest {
   exercise_name: string;
   /** Load on the bar in kilograms */
   weight_kg: number;
+  /** Provenance declaration for the batch; only mobile_imu rows can contribute to readiness */
+  measurement_source: SetAnalysisRequestMeasurementSource;
   /** User-facing mass unit used for load labels and coaching copy */
   display_unit?: SetAnalysisRequestDisplayUnit;
   /** User-entered load in display_unit; weight_kg remains canonical */

@@ -85,6 +85,17 @@ export interface AccelerationSample {
 }
 
 /**
+ * Provenance declaration for the batch; only mobile_imu rows can contribute to readiness
+ */
+export type SetAnalysisRequestMeasurementSource = typeof SetAnalysisRequestMeasurementSource[keyof typeof SetAnalysisRequestMeasurementSource];
+
+
+export const SetAnalysisRequestMeasurementSource = {
+  mobile_imu: 'mobile_imu',
+  test_fixture: 'test_fixture',
+} as const;
+
+/**
  * User-facing mass unit used for load labels and coaching copy
  */
 export type SetAnalysisRequestDisplayUnit = typeof SetAnalysisRequestDisplayUnit[keyof typeof SetAnalysisRequestDisplayUnit];
@@ -118,6 +129,8 @@ export interface SetAnalysisRequest {
   exercise_name: string;
   /** Load on the bar in kilograms */
   weight_kg: number;
+  /** Provenance declaration for the batch; only mobile_imu rows can contribute to readiness */
+  measurement_source: SetAnalysisRequestMeasurementSource;
   /** User-facing mass unit used for load labels and coaching copy */
   display_unit?: SetAnalysisRequestDisplayUnit;
   /** User-entered load in display_unit; weight_kg remains canonical */
@@ -139,9 +152,52 @@ export const SetAnalysisResultStatus = {
   success: 'success',
 } as const;
 
+/**
+ * Declared current-set batch provenance; test_fixture rows are retained but excluded from readiness
+ */
+export type SetAnalysisResultMeasurementSource = typeof SetAnalysisResultMeasurementSource[keyof typeof SetAnalysisResultMeasurementSource];
+
+
+export const SetAnalysisResultMeasurementSource = {
+  mobile_imu: 'mobile_imu',
+  test_fixture: 'test_fixture',
+} as const;
+
+/**
+ * Whether readiness used prior persisted mobile IMU rows
+ */
+export type SetAnalysisResultReadinessDataSource = typeof SetAnalysisResultReadinessDataSource[keyof typeof SetAnalysisResultReadinessDataSource];
+
+
+export const SetAnalysisResultReadinessDataSource = {
+  persisted_measured_sets: 'persisted_measured_sets',
+  no_trusted_persisted_history: 'no_trusted_persisted_history',
+} as const;
+
+export type ReadinessEvidenceMeasurementSource = typeof ReadinessEvidenceMeasurementSource[keyof typeof ReadinessEvidenceMeasurementSource];
+
+
+export const ReadinessEvidenceMeasurementSource = {
+  mobile_imu: 'mobile_imu',
+} as const;
+
+export interface ReadinessEvidence {
+  id: string;
+  created_at: string;
+  exercise_name: string;
+  weight_kg: number;
+  mean_velocity_ms: number;
+  first_rep_peak_ms: number | null;
+  measurement_source: ReadinessEvidenceMeasurementSource;
+}
+
 export interface SetAnalysisResult {
   status: SetAnalysisResultStatus;
   exercise_name: string;
+  /** Canonical current-set load used to select the ±15% load-match band */
+  weight_kg: number;
+  /** Declared current-set batch provenance; test_fixture rows are retained but excluded from readiness */
+  measurement_source: SetAnalysisResultMeasurementSource;
   /** Mean bar velocity in m/s integrated from the acceleration batch */
   mean_velocity_ms: number;
   /** Peak bar velocity in m/s */
@@ -186,6 +242,10 @@ export interface SetAnalysisResult {
   historical_baseline_velocity_ms: number | null;
   /** Number of historical load-matched sessions used for the comparison */
   historical_comparison_data_points: number;
+  /** Whether readiness used prior persisted mobile IMU rows */
+  readiness_data_source: SetAnalysisResultReadinessDataSource;
+  /** Prior trusted rows matched by exercise and load; the current set is excluded because it is persisted after calculation */
+  readiness_evidence: ReadinessEvidence[];
   /** Whether an optional diary sentiment context was available for this set date */
   diary_context_available: boolean;
   /** Non-clinical sentiment context only; does not contain the raw diary note */
