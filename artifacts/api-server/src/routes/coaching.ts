@@ -39,6 +39,13 @@ const DEMO_HISTORY_PATHS = [
 
 type PhonePlacement = "weight_stack" | "barbell" | "pocket";
 type DisplayUnit = "imperial" | "metric";
+type MeasurementSource = "computer_vision" | "mobile_imu" | "test_fixture";
+
+function measurementSourceForExercise(exerciseName: string): Exclude<MeasurementSource, "test_fixture"> {
+  return canonicalizeExerciseName(exerciseName) === "squat"
+    ? "computer_vision"
+    : "mobile_imu";
+}
 
 /**
  * Extract the scalar "motion" acceleration from a sample, gravity-corrected.
@@ -317,7 +324,6 @@ router.post("/analyze-set", async (req, res) => {
     weight_kg,
     target_reps,
     total_sets,
-    samples,
     measurement_source,
   } = parsed.data;
   const exerciseName = exercise_name.trim().replace(/\s+/g, " ");
@@ -342,34 +348,102 @@ router.post("/analyze-set", async (req, res) => {
   }).phone_placement;
 
   const placement: PhonePlacement = (phone_placement as PhonePlacement) ?? "weight_stack";
+  const request = parsed.data as typeof parsed.data & {
+    samples?: Array<{ x: number; y: number; z: number; timestamp: number }> | null;
+    plate_diameter_mm?: number | null;
+    mean_velocity_ms?: number | null;
+    peak_velocity_ms?: number | null;
+    first_rep_peak_ms?: number | null;
+    rep_peaks_ms?: number[] | null;
+    actual_reps?: number | null;
+    duration_s?: number | null;
+    sample_count?: number | null;
+    manual_rep_bounds_used?: boolean;
+  };
+  const inferredSource = measurementSourceForExercise(exerciseName);
+  const source: MeasurementSource = measurement_source === "test_fixture"
+    ? "test_fixture"
+    : inferredSource;
+  const isComputerVision = source === "computer_vision";
+  const plateDiameterMm = request.plate_diameter_mm ?? null;
+  const manualRepBoundsUsed = request.manual_rep_bounds_used === true;
 
-  // 1. Integrate velocity (axis selected by placement)
-  const integration = integrateVelocity(samples, placement);
-  if (!integration.valid) {
-    res.status(422).json({
-      status: "invalid_measurement",
-      message: integration.reason,
-    });
-    return;
-  }
-  const { velocities, mean, peak } = integration;
+  let velocities: number[];
+  let mean: number;
+  let peak: number;
+  let firstRepPeakMs: number | null;
+  let actualReps: number;
+  let durationS: number;
+  let sampleCount: number;
+  let repPeaks: number[];
 
-  const durationS =
-    samples.length >= 2
+  if (isComputerVision) {
+    const cvMean = request.mean_velocity_ms;
+    const cvPeak = request.peak_velocity_ms;
+    const cvRepPeaks = request.rep_peaks_ms ?? [];
+    const cvReps = request.actual_reps ?? cvRepPeaks.length;
+    if (
+      plateDiameterMm === null ||
+      !Number.isFinite(plateDiameterMm) ||
+      plateDiameterMm < 100 ||
+      !Number.isFinite(cvMean) ||
+      !Number.isFinite(cvPeak) ||
+      cvMean < 0.05 ||
+      cvPeak < cvMean ||
+      cvReps < 1 ||
+      cvRepPeaks.length < 1
+    ) {
+      res.status(422).json({
+        status: "invalid_measurement",
+        message: "Squat CV analysis needs a valid plate diameter and at least one measured rep velocity.",
+      });
+      return;
+    }
+    mean = cvMean;
+    peak = cvPeak;
+    repPeaks = cvRepPeaks;
+    firstRepPeakMs = request.first_rep_peak_ms ?? cvRepPeaks[0] ?? null;
+    actualReps = cvReps;
+    durationS = request.duration_s ?? 0;
+    sampleCount = request.sample_count ?? cvRepPeaks.length;
+    velocities = cvRepPeaks;
+  } else {
+    const samples = request.samples ?? [];
+    if (placement !== "weight_stack") {
+      res.status(422).json({
+        status: "invalid_measurement",
+        message: "Lat Pulldown IMU analysis requires a phone mounted to the weight stack.",
+      });
+      return;
+    }
+    const integration = integrateVelocity(samples, "weight_stack");
+    if (!integration.valid) {
+      res.status(422).json({
+        status: "invalid_measurement",
+        message: integration.reason,
+      });
+      return;
+    }
+    velocities = integration.velocities;
+    mean = integration.mean;
+    peak = integration.peak;
+    repPeaks = extractRepPeaks(velocities);
+    firstRepPeakMs = repPeaks.length > 0 ? (repPeaks[0] ?? null) : null;
+    actualReps = repPeaks.length;
+    durationS = samples.length >= 2
       ? (samples[samples.length - 1]!.timestamp - samples[0]!.timestamp) / 1000
       : 0;
+    sampleCount = samples.length;
+  }
 
   // 2. VBT profile enrichment
   const profile = getProfile(exerciseName);
   const estimated1RmPct = estimateOneRmPct(mean, profile);
   const velocityZone = getVelocityZone(mean);
 
-  const repPeaks = extractRepPeaks(velocities);
-  const firstRepPeakMs = repPeaks.length > 0 ? (repPeaks[0] ?? null) : null;
   const lossResult = calcVelocityLoss(repPeaks);
   const velocityLossPct = lossResult?.lossPercent ?? null;
   const fatigueLevel = lossResult?.fatigue ?? null;
-  const actualReps = repPeaks.length;
   if (actualReps === 0) {
     res.status(422).json({
       status: "invalid_measurement",
@@ -451,10 +525,14 @@ router.post("/analyze-set", async (req, res) => {
     await db.insert(setsTable).values({
       exerciseName: exerciseIdentity,
       weightKg: weight_kg,
-      measurementSource: measurement_source,
-      provenance: measurement_source === "mobile_imu"
-        ? "calibrated mobile IMU batch accepted by /analyze-set"
+      measurementSource: source,
+      provenance: source === "computer_vision"
+        ? "profile-view Squat CV metrics accepted by /analyze-set"
+        : source === "mobile_imu"
+        ? "calibrated weight-stack mobile IMU batch accepted by /analyze-set"
         : "declared test fixture batch accepted by /analyze-set",
+      plateDiameterMm,
+      manualRepBoundsUsed: manualRepBoundsUsed ? 1 : 0,
       targetReps: target_reps,
       actualReps,
       meanVelocityMs: Math.round(mean * 1000) / 1000,
@@ -465,7 +543,7 @@ router.post("/analyze-set", async (req, res) => {
       velocityLossPct,
       fatigueLevel,
       durationS: Math.round(durationS * 10) / 10,
-      sampleCount: samples.length,
+      sampleCount,
     });
   } catch (err) {
     // Persistence failure must not block the response — log and continue
@@ -476,7 +554,7 @@ router.post("/analyze-set", async (req, res) => {
     status: "success",
     exercise_name: exerciseName,
     weight_kg,
-    measurement_source,
+    measurement_source: source,
     mean_velocity_ms: Math.round(mean * 1000) / 1000,
     peak_velocity_ms: Math.round(peak * 1000) / 1000,
     first_rep_peak_ms: firstRepPeakMs !== null ? Math.round(firstRepPeakMs * 1000) / 1000 : null,
@@ -484,7 +562,9 @@ router.post("/analyze-set", async (req, res) => {
     velocity_zone: velocityZone,
     velocity_loss_pct: velocityLossPct,
     fatigue_level: fatigueLevel,
-    sample_count: samples.length,
+    sample_count: sampleCount,
+    plate_diameter_mm: plateDiameterMm,
+    manual_rep_bounds_used: manualRepBoundsUsed,
     duration_s: Math.round(durationS * 10) / 10,
     ai_feedback: aiFeedback,
     sparkden_history_used: sparkdenHistoryUsed,
