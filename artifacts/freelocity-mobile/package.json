@@ -59,6 +59,7 @@
   "dependencies": {
     "expo-camera": "~17.0.10",
     "expo-keep-awake": "^15.0.8",
-    "expo-sensors": "^15.0.8"
+    "expo-sensors": "^15.0.8",
+    "jpeg-js": "0.4.4"
   }
 }
