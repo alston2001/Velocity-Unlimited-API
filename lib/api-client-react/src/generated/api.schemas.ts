@@ -85,12 +85,13 @@ export interface AccelerationSample {
 }
 
 /**
- * Provenance declaration for the batch; only mobile_imu rows can contribute to readiness
+ * Optional legacy/test provenance override. Production source is inferred from the exercise profile.
  */
-export type SetAnalysisRequestMeasurementSource = typeof SetAnalysisRequestMeasurementSource[keyof typeof SetAnalysisRequestMeasurementSource];
+export type SetAnalysisRequestMeasurementSource = typeof SetAnalysisRequestMeasurementSource[keyof typeof SetAnalysisRequestMeasurementSource] | null;
 
 
 export const SetAnalysisRequestMeasurementSource = {
+  computer_vision: 'computer_vision',
   mobile_imu: 'mobile_imu',
   test_fixture: 'test_fixture',
 } as const;
@@ -107,14 +108,13 @@ export const SetAnalysisRequestDisplayUnit = {
 } as const;
 
 /**
- * How the phone is mounted during the set. Affects which axis is used for velocity integration and how the AI coaching interprets the data.
+ * Lat Pulldown phone placement. The weight stack path uses the Z axis.
  */
 export type SetAnalysisRequestPhonePlacement = typeof SetAnalysisRequestPhonePlacement[keyof typeof SetAnalysisRequestPhonePlacement];
 
 
 export const SetAnalysisRequestPhonePlacement = {
   weight_stack: 'weight_stack',
-  barbell: 'barbell',
   pocket: 'pocket',
 } as const;
 
@@ -129,8 +129,8 @@ export interface SetAnalysisRequest {
   exercise_name: string;
   /** Load on the bar in kilograms */
   weight_kg: number;
-  /** Provenance declaration for the batch; only mobile_imu rows can contribute to readiness */
-  measurement_source: SetAnalysisRequestMeasurementSource;
+  /** Optional legacy/test provenance override. Production source is inferred from the exercise profile. */
+  measurement_source?: SetAnalysisRequestMeasurementSource;
   /** User-facing mass unit used for load labels and coaching copy */
   display_unit?: SetAnalysisRequestDisplayUnit;
   /** User-entered load in display_unit; weight_kg remains canonical */
@@ -140,9 +140,52 @@ export interface SetAnalysisRequest {
   /** Total sets planned in the workout */
   total_sets: number;
   /** Ordered raw acceleration samples captured during the set */
-  samples: AccelerationSample[];
-  /** How the phone is mounted during the set. Affects which axis is used for velocity integration and how the AI coaching interprets the data. */
+  samples?: AccelerationSample[] | null;
+  /** Lat Pulldown phone placement. The weight stack path uses the Z axis. */
   phone_placement?: SetAnalysisRequestPhonePlacement;
+  /**
+     * Squat plate or sleeve diameter used to scale camera pixels to meters
+     * @minimum 100
+     * @maximum 1000
+     */
+  plate_diameter_mm?: number | null;
+  /**
+     * Pre-calculated on-device Squat mean velocity
+     * @minimum 0
+     */
+  mean_velocity_ms?: number | null;
+  /**
+     * Pre-calculated on-device Squat peak velocity
+     * @minimum 0
+     */
+  peak_velocity_ms?: number | null;
+  /**
+     * Pre-calculated first-repetition peak velocity
+     * @minimum 0
+     */
+  first_rep_peak_ms?: number | null;
+  /**
+     * Pre-calculated Squat per-repetition peak velocities
+     * @items.minimum 0
+     */
+  rep_peaks_ms?: number[] | null;
+  /**
+     * Pre-calculated Squat repetition count
+     * @minimum 1
+     */
+  actual_reps?: number | null;
+  /**
+     * Pre-calculated Squat set duration
+     * @minimum 0
+     */
+  duration_s?: number | null;
+  /**
+     * Number of CV frames used for the pre-calculated metrics
+     * @minimum 1
+     */
+  sample_count?: number | null;
+  /** Whether the athlete manually corrected Squat repetition bounds */
+  manual_rep_bounds_used?: boolean;
 }
 
 export type SetAnalysisResultStatus = typeof SetAnalysisResultStatus[keyof typeof SetAnalysisResultStatus];
@@ -153,12 +196,13 @@ export const SetAnalysisResultStatus = {
 } as const;
 
 /**
- * Declared current-set batch provenance; test_fixture rows are retained but excluded from readiness
+ * Measurement source inferred from the exercise profile
  */
 export type SetAnalysisResultMeasurementSource = typeof SetAnalysisResultMeasurementSource[keyof typeof SetAnalysisResultMeasurementSource];
 
 
 export const SetAnalysisResultMeasurementSource = {
+  computer_vision: 'computer_vision',
   mobile_imu: 'mobile_imu',
   test_fixture: 'test_fixture',
 } as const;
@@ -196,7 +240,7 @@ export interface SetAnalysisResult {
   exercise_name: string;
   /** Canonical current-set load used to select the ±15% load-match band */
   weight_kg: number;
-  /** Declared current-set batch provenance; test_fixture rows are retained but excluded from readiness */
+  /** Measurement source inferred from the exercise profile */
   measurement_source: SetAnalysisResultMeasurementSource;
   /** Mean bar velocity in m/s integrated from the acceleration batch */
   mean_velocity_ms: number;
@@ -214,6 +258,10 @@ export interface SetAnalysisResult {
   fatigue_level: string | null;
   /** Number of samples processed */
   sample_count: number;
+  /** Squat plate or sleeve diameter used for camera scaling */
+  plate_diameter_mm: number | null;
+  /** Whether Squat rep bounds were manually corrected */
+  manual_rep_bounds_used: boolean;
   /** Total set duration in seconds */
   duration_s: number;
   /** AI-generated coaching feedback grounded in VBT standards */

@@ -31,9 +31,15 @@ const fixture = row("4", {
   meanVelocityMs: 2.5,
 });
 const otherLoad = row("5", { weightKg: 80 });
+const cvRows = [
+  row("6", { measurementSource: "computer_vision", provenance: "profile-view Squat CV metrics accepted by /analyze-set" }),
+  row("7", { measurementSource: "computer_vision", provenance: "profile-view Squat CV metrics accepted by /analyze-set", firstRepPeakMs: 0.82 }),
+  row("8", { measurementSource: "computer_vision", provenance: "profile-view Squat CV metrics accepted by /analyze-set", firstRepPeakMs: 0.78 }),
+];
 
 assert.equal(canonicalizeExerciseName("  SQUAT   "), "squat");
 assert.equal(filterTrustedReadinessHistory([...trusted, fixture]).length, 3, "fixture rows must not be trusted");
+assert.equal(filterTrustedReadinessHistory([...cvRows, fixture]).length, 3, "trusted CV rows must remain eligible while fixtures stay excluded");
 assert.deepEqual(selectLoadMatchedHistory([...trusted, otherLoad], 60).map((item) => item.id), ["1", "2", "3"]);
 
 const report = computeReadinessFromHistory([...trusted, fixture, otherLoad], 60, 0.8);

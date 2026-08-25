@@ -15,7 +15,7 @@ export interface SetAnalysisResult {
   exercise_name: string;
   /** Canonical current-set load used to select the ±15% load-match band */
   weight_kg: number;
-  /** Declared current-set batch provenance; test_fixture rows are retained but excluded from readiness */
+  /** Measurement source inferred from the exercise profile */
   measurement_source: SetAnalysisResultMeasurementSource;
   /** Mean bar velocity in m/s integrated from the acceleration batch */
   mean_velocity_ms: number;
@@ -33,6 +33,10 @@ export interface SetAnalysisResult {
   fatigue_level: string | null;
   /** Number of samples processed */
   sample_count: number;
+  /** Squat plate or sleeve diameter used for camera scaling */
+  plate_diameter_mm: number | null;
+  /** Whether Squat rep bounds were manually corrected */
+  manual_rep_bounds_used: boolean;
   /** Total set duration in seconds */
   duration_s: number;
   /** AI-generated coaching feedback grounded in VBT standards */

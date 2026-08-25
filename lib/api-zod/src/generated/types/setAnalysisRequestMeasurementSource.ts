@@ -7,12 +7,13 @@
  */
 
 /**
- * Provenance declaration for the batch; only mobile_imu rows can contribute to readiness
+ * Optional legacy/test provenance override. Production source is inferred from the exercise profile.
  */
-export type SetAnalysisRequestMeasurementSource = typeof SetAnalysisRequestMeasurementSource[keyof typeof SetAnalysisRequestMeasurementSource];
+export type SetAnalysisRequestMeasurementSource = typeof SetAnalysisRequestMeasurementSource[keyof typeof SetAnalysisRequestMeasurementSource] | null;
 
 
 export const SetAnalysisRequestMeasurementSource = {
+  computer_vision: 'computer_vision',
   mobile_imu: 'mobile_imu',
   test_fixture: 'test_fixture',
 } as const;

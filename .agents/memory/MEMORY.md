@@ -5,3 +5,4 @@
 - [Readiness provenance](readiness-provenance.md) — only explicitly measured mobile IMU batches enter the baseline; unknown legacy rows remain excluded.
 - [Phone placement architecture](phone-placement-arch.md) — weight_stack/barbell use Z-axis; pocket uses 3-axis RMS magnitude; flows setup form → API → integrateVelocity → AI prompt.
 - [OpenAI output limits](openai-output-limit.md) — Luna may reject small completion caps; keep the budget generous and constrain response length in the prompt.
+- [Native CV frame support](native-cv-frame-support.md) — never report Squat velocity until decodable camera pixels reach the local tracker.

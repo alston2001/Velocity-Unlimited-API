@@ -161,7 +161,7 @@ async function fetchHistory(
   const since = new Date();
   since.setDate(since.getDate() - days);
 
-  const rows = await db
+  const rows = (await db
     .select()
     .from(setsTable)
     .where(
@@ -170,8 +170,13 @@ async function fetchHistory(
         gte(setsTable.createdAt, since),
       ),
     )
-    .filter((row) => isTrustedMeasurementRow(row))
-    .orderBy(desc(setsTable.createdAt));
+    .orderBy(desc(setsTable.createdAt)))
+    .filter((row) =>
+      isTrustedMeasurementRow({
+        measurementSource: row.measurementSource,
+        date: row.createdAt.toISOString(),
+      }) && row.measurementSource === expectedMeasurementSource(exerciseName),
+    );
 
   return rows
     .map((r) => ({

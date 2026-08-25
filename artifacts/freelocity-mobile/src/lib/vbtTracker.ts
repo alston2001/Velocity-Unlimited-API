@@ -364,6 +364,7 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
     const previous = this.previousFrame;
     let motion = 0;
     if (rgba && rgba.length >= width * height * 4) {
+      this.kalman.predict(0, dt);
       if (this.mode === 'FREE_WEIGHT_SIDE') {
         const lastCentroid = this.centroidValue;
         const centroid = findSideProfileCentroid(rgba, previous, width, height);
@@ -384,7 +385,9 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
         this.kalman.measurePosition(this.displacementValue);
       }
       this.previousFrame = rgba.slice();
-      this.velocityValue = this.kalman.values().velocity;
+      const estimate = this.kalman.values();
+      this.displacementValue = estimate.position;
+      this.velocityValue = estimate.velocity;
     }
     if (this.phaseValue === 'IDLE') {
       this.idleFrameCounter++;

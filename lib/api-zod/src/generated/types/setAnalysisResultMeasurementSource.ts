@@ -7,12 +7,13 @@
  */
 
 /**
- * Declared current-set batch provenance; test_fixture rows are retained but excluded from readiness
+ * Measurement source inferred from the exercise profile
  */
 export type SetAnalysisResultMeasurementSource = typeof SetAnalysisResultMeasurementSource[keyof typeof SetAnalysisResultMeasurementSource];
 
 
 export const SetAnalysisResultMeasurementSource = {
+  computer_vision: 'computer_vision',
   mobile_imu: 'mobile_imu',
   test_fixture: 'test_fixture',
 } as const;

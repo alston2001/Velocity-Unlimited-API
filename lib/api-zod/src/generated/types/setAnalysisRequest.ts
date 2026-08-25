@@ -21,8 +21,8 @@ export interface SetAnalysisRequest {
   exercise_name: string;
   /** Load on the bar in kilograms */
   weight_kg: number;
-  /** Provenance declaration for the batch; only mobile_imu rows can contribute to readiness */
-  measurement_source: SetAnalysisRequestMeasurementSource;
+  /** Optional legacy/test provenance override. Production source is inferred from the exercise profile. */
+  measurement_source?: SetAnalysisRequestMeasurementSource;
   /** User-facing mass unit used for load labels and coaching copy */
   display_unit?: SetAnalysisRequestDisplayUnit;
   /** User-entered load in display_unit; weight_kg remains canonical */
@@ -32,7 +32,50 @@ export interface SetAnalysisRequest {
   /** Total sets planned in the workout */
   total_sets: number;
   /** Ordered raw acceleration samples captured during the set */
-  samples: AccelerationSample[];
-  /** How the phone is mounted during the set. Affects which axis is used for velocity integration and how the AI coaching interprets the data. */
+  samples?: AccelerationSample[] | null;
+  /** Lat Pulldown phone placement. The weight stack path uses the Z axis. */
   phone_placement?: SetAnalysisRequestPhonePlacement;
+  /**
+     * Squat plate or sleeve diameter used to scale camera pixels to meters
+     * @minimum 100
+     * @maximum 1000
+     */
+  plate_diameter_mm?: number | null;
+  /**
+     * Pre-calculated on-device Squat mean velocity
+     * @minimum 0
+     */
+  mean_velocity_ms?: number | null;
+  /**
+     * Pre-calculated on-device Squat peak velocity
+     * @minimum 0
+     */
+  peak_velocity_ms?: number | null;
+  /**
+     * Pre-calculated first-repetition peak velocity
+     * @minimum 0
+     */
+  first_rep_peak_ms?: number | null;
+  /**
+     * Pre-calculated Squat per-repetition peak velocities
+     * @items.minimum 0
+     */
+  rep_peaks_ms?: number[] | null;
+  /**
+     * Pre-calculated Squat repetition count
+     * @minimum 1
+     */
+  actual_reps?: number | null;
+  /**
+     * Pre-calculated Squat set duration
+     * @minimum 0
+     */
+  duration_s?: number | null;
+  /**
+     * Number of CV frames used for the pre-calculated metrics
+     * @minimum 1
+     */
+  sample_count?: number | null;
+  /** Whether the athlete manually corrected Squat repetition bounds */
+  manual_rep_bounds_used?: boolean;
 }

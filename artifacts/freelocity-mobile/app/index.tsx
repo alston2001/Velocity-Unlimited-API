@@ -12,171 +12,365 @@ import {
   Text,
   TextInput,
   View,
+  Platform,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { analyzeSet, useGetDemoHistory, type DemoHistoricalSet, type SetAnalysisResult } from '@workspace/api-client-react';
-import { useColors } from '@/hooks/useColors';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { analyzeSet, type SetAnalysisResult } from '@workspace/api-client-react';
 import { useConcussionTracker } from '@/src/hooks/useConcussionTracker';
-import { convertHistoryLoads, formatMassFromKg, fromCanonicalKg, getUnitConfig, toCanonicalKg, type UnitSystem } from '@/src/lib/units';
 import { useVbtTracker } from '@/src/hooks/useVbtTracker';
+import { DEFAULT_PLATE_DIAMETER_MM, deriveCvRepMetrics, measurementModeForExercise, needsManualCvReview, trimRackingNoise, type CvFramePoint, type CvRepBounds } from '@/src/lib/exerciseMeasurement';
+import { formatMassFromKg, fromCanonicalKg, getUnitConfig, toCanonicalKg, type UnitSystem } from '@/src/lib/units';
 import type { SetSummary } from '@/src/lib/vbtTracker';
 
-type Phase = 'SETUP' | 'CALIBRATE' | 'RECORD' | 'PROCESSING' | 'FEEDBACK' | 'RECOVERY';
-type Placement = 'barbell';
-type Colors = ReturnType<typeof useColors>;
+type Phase = 'SETUP' | 'CALIBRATE' | 'RECORD' | 'POST_REVIEW' | 'PROCESSING' | 'FEEDBACK' | 'RECOVERY';
+type CalibrationState = 'IDLE' | 'CAPTURING' | 'READY' | 'FAILED';
 const UNIT_STORAGE_KEY = 'freelocity.unit-system';
 const REST_CALIBRATION_MS = 1000;
+const IMU_INTERVAL_MS = 20;
+const CV_SNAPSHOT_INTERVAL_MS = 200;
 
-const seededSamples = () =>
-  Array.from({ length: 181 }, (_, i) => {
-    const t = i * 100;
-    const cycle = Math.sin(i / 8) * 0.16 + Math.sin(i / 3) * 0.02;
-    return { x: 0, y: 0, z: cycle, timestamp: t };
-  });
-
-function Button({ label, onPress, secondary = false, disabled = false }: { label: string; onPress: () => void; secondary?: boolean; disabled?: boolean }) {
-  return (
-    <Pressable disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.button, secondary && styles.secondaryButton, { opacity: disabled ? 0.4 : pressed ? 0.75 : 1 }]}>
-      <Text style={[styles.buttonText, secondary && styles.secondaryButtonText]}>{label}</Text>
-    </Pressable>
-  );
+function Button({ label, onPress, disabled = false, secondary = false }: { label: string; onPress: () => void; disabled?: boolean; secondary?: boolean }) {
+  return <Pressable testID={`button-${label.toLowerCase().replace(/\W+/g, '-')}`} disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.button, secondary && styles.buttonSecondary, { opacity: disabled ? 0.4 : pressed ? 0.75 : 1 }]}><Text style={[styles.buttonText, secondary && styles.buttonSecondaryText]}>{label}</Text></Pressable>;
 }
 
 function Metric({ label, value, note }: { label: string; value: string; note?: string }) {
-  return <View style={styles.metric}><Text style={styles.metricLabel}>{label}</Text><Text style={styles.metricValue}>{value}</Text>{note && <Text style={styles.metricNote}>{note}</Text>}</View>;
+  return <View style={styles.metric}><Text style={styles.metricLabel}>{label}</Text><Text style={styles.metricValue}>{value}</Text>{note ? <Text style={styles.metricNote}>{note}</Text> : null}</View>;
 }
 
-function UnitToggle({ value, onChange }: { value: UnitSystem; onChange: (value: UnitSystem) => void }) {
-  return <View style={styles.unitToggle}>
-    {(['imperial', 'metric'] as const).map((system) => (
-      <Pressable
-        key={system}
-        testID={`unit-${system}`}
-        onPress={() => onChange(system)}
-        style={[styles.unitOption, value === system && styles.unitOptionActive]}
-      >
-        <Text style={[styles.unitOptionText, value === system && styles.unitOptionTextActive]}>{getUnitConfig(system).label}</Text>
-        <Text style={[styles.unitOptionSubtext, value === system && styles.unitOptionTextActive]}>{getUnitConfig(system).abbreviation}</Text>
-      </Pressable>
-    ))}
-  </View>;
+function UnitToggle({ value, onChange }: { value: UnitSystem; onChange: (next: UnitSystem) => void }) {
+  return <View style={styles.unitToggle}>{(['imperial', 'metric'] as const).map((unit) => <Pressable key={unit} testID={`unit-${unit}`} onPress={() => onChange(unit)} style={[styles.unit, value === unit && styles.unitSelected]}><Text style={[styles.unitText, value === unit && styles.unitTextSelected]}>{getUnitConfig(unit).label}</Text><Text style={[styles.caption, value === unit && styles.unitTextSelected]}>{getUnitConfig(unit).abbreviation}</Text></Pressable>)}</View>;
 }
 
-function HistoryCard({ rows, unitSystem, loading }: { rows: DemoHistoricalSet[]; unitSystem: UnitSystem; loading: boolean }) {
-  const displayRows = convertHistoryLoads(rows, unitSystem);
-  return <View style={styles.card}>
-    <Text style={styles.cardTitle}>24-set history · {getUnitConfig(unitSystem).label}</Text>
-    <Text style={styles.body}>Canonical history loads are stored in kg; these labels update with your unit preference.</Text>
-    {loading ? <Text style={styles.caption}>Loading canonical demo history…</Text> : displayRows.length === 0 ? <Text style={styles.caption}>History unavailable until the API responds.</Text> :
-      <View style={styles.historyList}>{displayRows.map((row) => <View key={row.id} style={styles.historyRow}><Text style={styles.historySet}>SET {row.setNumber}</Text><Text style={styles.historyLoad}>{row.displayLoad.toFixed(1)} {row.displayUnit}</Text><Text style={styles.historyMeta}>{row.actualReps} reps · {row.velocityLossPct.toFixed(0)}% loss</Text></View>)}</View>}
-  </View>;
-}
-
-function Recovery({ colors, onBack }: { colors: Colors; onBack: () => void }) {
+function Recovery({ onBack }: { onBack: () => void }) {
   const tracker = useConcussionTracker();
-  const [consent, setConsent] = useState(false);
-  const [started, setStarted] = useState(false);
-  const [balanceDone, setBalanceDone] = useState(false);
-  const questions = [
-    ['orientation', 'What day of the week is it?'],
-    ['concentration', 'Repeat these numbers backward: 4 · 8 · 2'],
-    ['memory', 'Do you remember the instructions you just read?'],
-  ] as const;
-  const answer = (domain: 'orientation' | 'concentration' | 'memory', correct: boolean) => {
-    tracker.recordAnswer(correct, domain);
-    setStarted(true);
-  };
-  return (
-    <ScrollView contentContainerStyle={styles.page}>
-      <Text style={styles.eyebrow}>SEPARATE SAFETY CHECK</Text>
-      <Text style={styles.title}>Recovery check-in</Text>
-      <Text style={styles.body}>This is a conservative screening aid, not a concussion diagnosis. Do not use it to clear someone to play.</Text>
-      {!consent ? <View style={styles.card}><Text style={styles.cardTitle}>Before you begin</Text><Text style={styles.body}>I understand this check-in is optional, results are uncertain, and symptoms require a qualified professional.</Text><Button label="I CONSENT · START CHECK" onPress={() => setConsent(true)} /></View> :
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Cognitive prompts</Text>
-          {questions.map(([domain, question]) => <View key={domain} style={styles.question}><Text style={styles.body}>{question}</Text><View style={styles.row}><Button label="CORRECT" onPress={() => answer(domain, true)} secondary /><Button label="INCORRECT" onPress={() => answer(domain, false)} secondary /></View></View>)}
-          <Text style={styles.cardTitle}>Balance</Text>
-          <Text style={styles.body}>Stand still only if safe. Stop immediately for dizziness or worsening symptoms.</Text>
-          {!balanceDone ? <Button label="COMPLETE 10-SECOND BALANCE CHECK" onPress={() => { tracker.startBalance(); tracker.recordBalanceSample({ x: 0.2, y: 0.1, z: 0.05 }); setBalanceDone(true); tracker.completeBalance(10); }} /> : <Text style={styles.success}>Balance sample recorded · estimated sway only</Text>}
-          {started && <View style={styles.result}><Text style={styles.cardTitle}>Conservative result · {tracker.assessment.riskTier}</Text><Text style={styles.body}>{tracker.assessment.correctAnswers}/3 cognitive prompts marked correct. This cannot rule out concussion.</Text>{tracker.assessment.riskTier !== 'LOW' && <Text style={styles.warning}>STOP EXERCISE and seek athletic-trainer or medical-professional guidance now.</Text>}<Text style={styles.body}>If there are severe or worsening symptoms, seek urgent care.</Text></View>}
-        </View>}
-      <Button label="BACK TO SQUAT FEEDBACK" onPress={onBack} secondary />
-    </ScrollView>
-  );
+  const [consented, setConsented] = useState(false);
+  return <ScrollView contentContainerStyle={styles.page}>
+    <Text style={styles.eyebrow}>SEPARATE SAFETY CHECK</Text><Text style={styles.title}>Recovery check-in</Text>
+    <Text style={styles.body}>This is a conservative screening aid, not a concussion diagnosis. Do not use it to clear someone to play.</Text>
+    {!consented ? <View style={styles.card}><Text style={styles.cardTitle}>Before you begin</Text><Text style={styles.body}>Only continue if it is safe to do so. New, severe, or worsening symptoms need qualified medical guidance.</Text><Button label="I CONSENT · START CHECK" onPress={() => setConsented(true)} /></View> :
+      <View style={styles.card}><Text style={styles.cardTitle}>Conservative check-in</Text><Text style={styles.body}>This separate screen remains independent from training readiness and set velocity.</Text><Button label="MARK BALANCE SAMPLE" onPress={() => { tracker.startBalance(); tracker.recordBalanceSample({ x: 0, y: 0, z: 0 }); tracker.completeBalance(10); }} /><Text style={styles.caption}>Do not use this result for diagnosis or return-to-play decisions.</Text></View>}
+    <Button label="BACK TO SET FEEDBACK" secondary onPress={onBack} />
+  </ScrollView>;
 }
 
-function Feedback({ result, fallback, error, colors, onRecovery, onRestart, unitSystem, weightKg, exerciseName }: { result: SetAnalysisResult | null; fallback: SetSummary; error: string | null; colors: Colors; onRecovery: () => void; onRestart: () => void; unitSystem: UnitSystem; weightKg: number; exerciseName: string }) {
-  const isMeasured = fallback.measurementStatus === 'MEASURED';
-  const r = isMeasured ? result : null;
+function Feedback({ exerciseName, unitSystem, weightKg, summary, result, error, onRestart, onRecovery }: {
+  exerciseName: string; unitSystem: UnitSystem; weightKg: number; summary: SetSummary; result: SetAnalysisResult | null; error: string | null; onRestart: () => void; onRecovery: () => void;
+}) {
+  const measured = summary.measurementStatus === 'MEASURED';
+  const source = measurementModeForExercise(exerciseName) === 'SQUAT_CV' ? 'COMPUTER VISION' : 'WEIGHT-STACK IMU';
   return <ScrollView contentContainerStyle={styles.page}>
     <Text style={styles.eyebrow}>SET FEEDBACK · {exerciseName.toUpperCase()}</Text><Text style={styles.title}>What changed today</Text>
-    <View style={styles.source}><Text style={styles.sourceText}>{isMeasured ? 'IMU MEASUREMENT · CALIBRATED' : 'VELOCITY UNAVAILABLE'}</Text><Text style={styles.body}>{isMeasured ? 'Velocity was derived from calibrated IMU samples using their recorded timestamps.' : fallback.unavailableReason ?? 'This capture did not produce a supportable velocity measurement. Recalibrate at rest and retake the set.'}</Text></View>
+    <View style={styles.source}><Text style={styles.sourceText}>{measured ? `${source} · MEASURED` : 'VELOCITY WITHHELD'}</Text><Text style={styles.body}>{measured ? `${source} velocity was calculated from this set's local measurement data.` : summary.unavailableReason ?? error ?? 'This capture did not produce a supportable velocity measurement.'}</Text></View>
     <View style={styles.grid}>
-       <Metric label="LOAD" value={formatMassFromKg(weightKg, unitSystem)} note="display preference" />
-      <Metric label="REPS" value={String(r?.actual_reps ?? fallback.reps.length)} />
-      <Metric label="MEAN VELOCITY" value={isMeasured ? `${(r?.mean_velocity_ms ?? 0).toFixed(3)} m/s` : 'Unavailable'} note={isMeasured ? 'calibrated IMU' : 'not submitted'} />
-      <Metric label="PEAK VELOCITY" value={isMeasured ? `${(r?.peak_velocity_ms ?? fallback.topSpeed).toFixed(3)} m/s` : 'Unavailable'} note={isMeasured ? 'per-rep bounded' : 'not measured'} />
-      <Metric label="VELOCITY LOSS" value={isMeasured && r?.velocity_loss_pct != null ? `${r.velocity_loss_pct.toFixed(1)}%` : '—'} note={isMeasured ? r?.fatigue_level ?? 'needs ≥2 reps' : 'not available'} />
-      <Metric label="DURATION" value={`${(r?.duration_s ?? fallback.durationSec ?? 0).toFixed(1)} s`} />
-      <Metric label="DATA QUALITY" value={isMeasured ? 'MEASURED' : 'WITHHELD'} note={isMeasured ? `${r?.sample_count ?? fallback.sampleCount ?? 0} timestamped samples` : 'no coaching or readiness'} />
+      <Metric label="LOAD" value={formatMassFromKg(weightKg, unitSystem)} />
+      <Metric label="REPS" value={String(result?.actual_reps ?? summary.reps.length)} />
+      <Metric label="MEAN VELOCITY" value={measured ? `${(result?.mean_velocity_ms ?? 0).toFixed(3)} m/s` : 'Unavailable'} />
+      <Metric label="PEAK VELOCITY" value={measured ? `${(result?.peak_velocity_ms ?? summary.topSpeed).toFixed(3)} m/s` : 'Unavailable'} />
+      <Metric label="VELOCITY LOSS" value={result?.velocity_loss_pct == null ? '—' : `${result.velocity_loss_pct.toFixed(1)}%`} />
+      <Metric label="QUALITY" value={measured ? 'MEASURED' : 'WITHHELD'} note={measured ? `${result?.sample_count ?? summary.sampleCount ?? 0} samples` : 'no readiness or coaching'} />
     </View>
-    <View style={styles.card}><Text style={styles.cardTitle}>Rep-by-rep breakdown</Text>{fallback.reps.length > 0 ? fallback.reps.map((rep) => <View key={rep.repNumber} style={styles.repRow}><Text style={styles.repName}>REP {rep.repNumber}</Text><Text style={styles.repMetric}>{rep.repTimeSec.toFixed(2)} s</Text><Text style={styles.repMetric}>{rep.meanVelocity == null ? 'Mean unavailable' : `${rep.meanVelocity.toFixed(3)} m/s mean`}</Text><Text style={styles.repMetric}>{rep.peakVelocity == null ? 'Peak unavailable' : `${rep.peakVelocity.toFixed(3)} m/s peak`}</Text></View>) : <Text style={styles.body}>No complete, calibrated reps were detected. Velocity metrics remain unavailable.</Text>}</View>
-    <View style={styles.card}><Text style={styles.cardTitle}>Readiness · load matched</Text><Text style={styles.readiness}>{r?.cns_readiness_score == null ? 'Building baseline' : `${r.cns_readiness_score}/100`}</Text><Text style={styles.body}>{r?.motor_readiness_level ?? 'Unavailable without a valid measurement'} · trend: {r?.velocity_trend ?? 'Unavailable'}</Text>{r?.baseline_velocity_ms != null && <Text style={styles.body}>Baseline first-rep peak: {r.baseline_velocity_ms.toFixed(3)} m/s</Text>}<Text style={styles.caption}>{r?.readiness_data_source === 'persisted_measured_sets' ? `${r.readiness_evidence.length} prior measured IMU set${r.readiness_evidence.length === 1 ? '' : 's'} matched this exercise and load.` : 'No prior trusted measured IMU sets matched this exercise and load.'}</Text></View>
-    <View style={styles.card}><Text style={styles.cardTitle}>Historical profile · {exerciseName}</Text><Text style={styles.body}>{r?.historical_comparison ?? 'Historical comparison is unavailable because this capture was not a valid measurement.'}</Text>{r?.historical_comparison_delta_pct != null && <Text style={styles.success}>{Math.abs(r.historical_comparison_delta_pct).toFixed(1)}% {r.historical_comparison_delta_pct >= 0 ? 'faster' : 'slower'} than your load-matched mean · {r.historical_comparison_data_points} sessions</Text>}</View>
-    <View style={styles.card}><Text style={styles.cardTitle}>AI coach · evidence grounded</Text>{!r && <Text style={styles.warning}>{isMeasured ? `Analysis request failed: ${error ?? 'The server did not return a result.'}` : 'Coaching and readiness were withheld because this was not a valid velocity measurement.'}</Text>}<Text style={styles.body}>{r?.ai_feedback ?? 'Retake after one second of still rest calibration with the phone secured to the barbell. Do not use this result for training validation.'}</Text><Text style={styles.disclaimer}>Recommendations are performance guidance only. No injury or concussion inference is made.</Text></View>
-    <Button label="START SEPARATE RECOVERY CHECK-IN" onPress={onRecovery} secondary /><Button label="RESTART HERO SQUAT" onPress={onRestart} />
+    <View style={styles.card}><Text style={styles.cardTitle}>Rep-by-rep velocity</Text>{summary.reps.length ? summary.reps.map((rep) => <View style={styles.repRow} key={rep.repNumber}><Text style={styles.repName}>REP {rep.repNumber}</Text><Text style={styles.repMetric}>{rep.repTimeSec.toFixed(2)} s</Text><Text style={styles.repMetric}>{rep.meanVelocity?.toFixed(3) ?? '—'} m/s mean</Text><Text style={styles.repMetric}>{rep.peakVelocity?.toFixed(3) ?? '—'} m/s peak</Text></View>) : <Text style={styles.body}>No complete, reliable repetitions were available.</Text>}</View>
+    <View style={styles.card}><Text style={styles.cardTitle}>Readiness · load matched</Text><Text style={styles.readiness}>{result?.cns_readiness_score == null ? 'Building baseline' : `${result.cns_readiness_score}/100`}</Text><Text style={styles.body}>{result?.motor_readiness_level ?? 'Unavailable without a valid measured set'} · {result?.velocity_trend ?? 'Insufficient data'}</Text></View>
+    <View style={styles.card}><Text style={styles.cardTitle}>Historical profile</Text><Text style={styles.body}>{result?.historical_comparison ?? 'Historical comparison is available after a valid measured set is saved.'}</Text></View>
+    <View style={styles.card}><Text style={styles.cardTitle}>AI coach · evidence grounded</Text><Text style={styles.body}>{result?.ai_feedback ?? error ?? 'Coaching was withheld because this capture was not a valid measurement.'}</Text><Text style={styles.caption}>Performance guidance only. It does not diagnose injury, fatigue, or recovery status.</Text></View>
+    <Button label="START SEPARATE RECOVERY CHECK-IN" secondary onPress={onRecovery} /><Button label="START ANOTHER SET" onPress={onRestart} />
   </ScrollView>;
 }
 
 export default function MotionTrackerScreen() {
-  const colors = useColors(); const insets = useSafeAreaInsets(); const router = useRouter(); const [permission, requestPermission] = useCameraPermissions();
-  const [phase, setPhase] = useState<Phase>('SETUP'); const [exerciseName, setExerciseName] = useState('Squat'); const [weight, setWeight] = useState('60'); const [targetReps, setTargetReps] = useState('5'); const placement: Placement = 'barbell'; const [demoMode, setDemoMode] = useState(false); const [summary, setSummary] = useState<SetSummary>({ reps: [], meanRepTime: 0, topSpeed: 0, peakVelocities: [], consistencyScore: 0 }); const [result, setResult] = useState<SetAnalysisResult | null>(null); const [error, setError] = useState<string | null>(null); const [unitSystem, setUnitSystem] = useState<UnitSystem>('imperial'); const [unitsReady, setUnitsReady] = useState(false); const [calibrationState, setCalibrationState] = useState<'IDLE' | 'CAPTURING' | 'READY' | 'FAILED'>('IDLE');
-  const samples = useRef<{ x: number; y: number; z: number; timestamp: number }[]>([]); const startedAt = useRef(0); const finished = useRef(false); const calibrationTimer = useRef<ReturnType<typeof setTimeout> | null>(null); const tracker = useVbtTracker('FREE_WEIGHT_SIDE'); useKeepAwake();
-  const historyQuery = useGetDemoHistory();
-  const displayWeightKg = useMemo(() => {
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const [permission, requestPermission] = useCameraPermissions();
+  const [phase, setPhase] = useState<Phase>('SETUP');
+  const [exerciseName, setExerciseName] = useState('Squat');
+  const [weight, setWeight] = useState('60');
+  const [targetReps, setTargetReps] = useState('5');
+  const [plateDiameter, setPlateDiameter] = useState(String(DEFAULT_PLATE_DIAMETER_MM));
+  const [unitSystem, setUnitSystem] = useState<UnitSystem>('imperial');
+  const [demoMode, setDemoMode] = useState(false);
+  const [calibration, setCalibration] = useState<CalibrationState>('IDLE');
+  const [cameraReady, setCameraReady] = useState(false);
+  const [trackingLost, setTrackingLost] = useState(false);
+  const [manualBounds, setManualBounds] = useState<CvRepBounds[]>([]);
+  const [summary, setSummary] = useState<SetSummary>({ reps: [], meanRepTime: 0, topSpeed: 0, peakVelocities: [], consistencyScore: 0 });
+  const [result, setResult] = useState<SetAnalysisResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const tracker = useVbtTracker(measurementModeForExercise(exerciseName) === 'SQUAT_CV' ? 'FREE_WEIGHT_SIDE' : 'PULLEY_FRONT');
+  const imuSamples = useRef<Array<{ x: number; y: number; z: number; timestamp: number }>>([]);
+  const cvFrames = useRef<CvFramePoint[]>([]);
+  const cameraRef = useRef<CameraView | null>(null);
+  const cvCaptureBusy = useRef(false);
+  const lastCvFrameAt = useRef<number | null>(null);
+  const calibrationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const startedAt = useRef(0);
+  const finalized = useRef(false);
+  useKeepAwake();
+
+  const mode = measurementModeForExercise(exerciseName);
+  const isSquat = mode === 'SQUAT_CV';
+  const weightKg = useMemo(() => {
     const parsed = Number(weight);
     return Number.isFinite(parsed) && parsed > 0 ? toCanonicalKg(parsed, unitSystem) : 0;
-  }, [unitSystem, weight]);
+  }, [weight, unitSystem]);
+  const plateDiameterMm = Number(plateDiameter);
+
+  useEffect(() => { AsyncStorage.getItem(UNIT_STORAGE_KEY).then((value) => { if (value === 'imperial' || value === 'metric') setUnitSystem(value); }).catch(() => undefined); }, []);
+  useEffect(() => { AsyncStorage.setItem(UNIT_STORAGE_KEY, unitSystem).catch(() => undefined); }, [unitSystem]);
+  useEffect(() => () => { if (calibrationTimer.current) clearTimeout(calibrationTimer.current); }, []);
+
+  useEffect(() => {
+    if (phase !== 'RECORD' || isSquat || demoMode) return;
+    Accelerometer.setUpdateInterval(IMU_INTERVAL_MS);
+    const subscription = Accelerometer.addListener((data) => {
+      const timestamp = Date.now();
+      imuSamples.current.push({ x: data.x, y: data.y, z: data.z, timestamp });
+      tracker.updateImu(data.z * 9.81, timestamp);
+    });
+    return () => subscription.remove();
+  }, [demoMode, isSquat, phase, tracker.updateImu]);
+
+  const processWebSnapshot = useCallback(async (base64: string, timestamp: number) => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return false;
+    const image = document.createElement('img');
+    image.src = `data:image/jpeg;base64,${base64}`;
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error('The camera snapshot could not be decoded.'));
+    });
+    const maxDimension = 320;
+    const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
+    const width = Math.max(8, Math.round(image.naturalWidth * scale));
+    const height = Math.max(8, Math.round(image.naturalHeight * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) throw new Error('The browser does not expose canvas pixels for CV tracking.');
+    context.drawImage(image, 0, 0, width, height);
+    const rgba = new Uint8ClampedArray(context.getImageData(0, 0, width, height).data);
+    const deltaSeconds = lastCvFrameAt.current == null ? CV_SNAPSHOT_INTERVAL_MS / 1000 : Math.max(0.03, (timestamp - lastCvFrameAt.current) / 1000);
+    lastCvFrameAt.current = timestamp;
+    const snapshot = tracker.processFrame(rgba, width, height, deltaSeconds);
+    cvFrames.current.push({
+      timestamp,
+      displacementM: snapshot.displacement,
+      tracked: snapshot.centroid !== null,
+    });
+    setTrackingLost(snapshot.centroid === null);
+    return true;
+  }, [tracker.processFrame]);
+
+  useEffect(() => {
+    if (phase !== 'RECORD' || !isSquat) return;
+    if (Platform.OS !== 'web') {
+      setTrackingLost(true);
+      return;
+    }
+    const captureSnapshot = async () => {
+      if (cvCaptureBusy.current || !cameraRef.current) return;
+      cvCaptureBusy.current = true;
+      try {
+        const picture = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.1, skipProcessing: true });
+        if (picture.base64) await processWebSnapshot(picture.base64, Date.now());
+      } catch {
+        setTrackingLost(true);
+      } finally {
+        cvCaptureBusy.current = false;
+      }
+    };
+    void captureSnapshot();
+    const interval = setInterval(() => { void captureSnapshot(); }, CV_SNAPSHOT_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [isSquat, phase, processWebSnapshot]);
+
   const changeUnit = useCallback((next: UnitSystem) => {
     const parsed = Number(weight);
-    if (Number.isFinite(parsed) && parsed > 0) {
-      setWeight(fromCanonicalKg(toCanonicalKg(parsed, unitSystem), next).toFixed(1));
-    }
+    if (Number.isFinite(parsed) && parsed > 0) setWeight(fromCanonicalKg(toCanonicalKg(parsed, unitSystem), next).toFixed(1));
     setUnitSystem(next);
   }, [unitSystem, weight]);
-  useEffect(() => {
-    AsyncStorage.getItem(UNIT_STORAGE_KEY).then((stored) => {
-      if (stored === 'metric' || stored === 'imperial') setUnitSystem(stored);
-      setUnitsReady(true);
-    }).catch(() => setUnitsReady(true));
-  }, []);
-  useEffect(() => {
-    if (unitsReady) AsyncStorage.setItem(UNIT_STORAGE_KEY, unitSystem).catch(() => undefined);
-  }, [unitSystem, unitsReady]);
-  useEffect(() => () => { if (calibrationTimer.current) clearTimeout(calibrationTimer.current); }, []);
-  useEffect(() => { if (phase !== 'RECORD' || demoMode) return; Accelerometer.setUpdateInterval(20); const sub = Accelerometer.addListener((data) => { const timestamp = Date.now(); samples.current.push({ x: data.x, y: data.y, z: data.z, timestamp }); const next = tracker.updateImu(data.y * 9.81, timestamp); if (next.completedSet) finish(next.completedSet); }); return () => sub.remove(); }, [demoMode, phase, tracker.updateImu]);
-  const captureRestCalibration = useCallback(() => {
-    setCalibrationState('CAPTURING');
-    const restSamples: number[] = [];
-    Accelerometer.setUpdateInterval(20);
-    const sub = Accelerometer.addListener((data) => restSamples.push(data.y * 9.81));
+
+  const calibrateImu = useCallback(() => {
+    setCalibration('CAPTURING');
+    const rest: number[] = [];
+    Accelerometer.setUpdateInterval(IMU_INTERVAL_MS);
+    const sub = Accelerometer.addListener((data) => rest.push(data.z * 9.81));
     calibrationTimer.current = setTimeout(() => {
       sub.remove();
-      const calibrated = tracker.calibrateImu(restSamples);
-      setCalibrationState(calibrated ? 'READY' : 'FAILED');
+      setCalibration(tracker.calibrateImu(rest) ? 'READY' : 'FAILED');
     }, REST_CALIBRATION_MS);
   }, [tracker.calibrateImu]);
-  const finish = useCallback(async (tracked?: SetSummary) => { if (finished.current) return; finished.current = true; const current = tracked ?? tracker.stopSet().completedSet ?? summary; const source = demoMode ? 'DEMO' : 'IMU'; const isMeasured = source === 'IMU' && current.measurementStatus === 'MEASURED'; const decorated = { ...current, durationSec: (Date.now() - startedAt.current) / 1000, sampleCount: samples.current.length, dataQuality: isMeasured ? 'GOOD' : source === 'DEMO' ? 'DEMO' : 'DEGRADED', confidence: isMeasured ? 'MEDIUM' : 'LOW', inferenceSource: source, measurementStatus: isMeasured ? 'MEASURED' : source === 'DEMO' ? 'REHEARSAL' : 'UNAVAILABLE', unavailableReason: isMeasured ? undefined : current.unavailableReason ?? (source === 'DEMO' ? 'Rehearsal data is never submitted as measured velocity.' : 'No validated IMU rep metrics were available.'), limitations: isMeasured ? ['IMU-derived estimate. Phone must remain secured to the selected axis.'] : ['Velocity was withheld; this capture was not submitted for coaching or readiness.'] } as SetSummary; setSummary(decorated); setError(decorated.unavailableReason ?? null); if (!isMeasured) { setResult(null); setPhase('FEEDBACK'); return; } setPhase('PROCESSING'); setError(null); try { const response = await analyzeSet({ exercise_name: exerciseName.trim(), weight_kg: displayWeightKg, measurement_source: 'mobile_imu', display_unit: unitSystem, display_load: Number(weight), target_reps: Number(targetReps), total_sets: 1, phone_placement: placement === 'barbell' ? 'barbell' : 'pocket', samples: samples.current }); setResult(response); setPhase('FEEDBACK'); } catch (e) { setError(e instanceof Error ? e.message : 'Analysis request failed'); setPhase('FEEDBACK'); } }, [demoMode, displayWeightKg, exerciseName, placement, summary, targetReps, tracker.stopSet, unitSystem, weight]);
-  const start = () => { if (!exerciseName.trim()) { setError('Enter the exercise you plan to film before starting.'); return; } samples.current = []; finished.current = false; startedAt.current = Date.now(); setResult(null); setError(null); if (demoMode) { setPhase('RECORD'); setTimeout(() => finish({ reps: [], meanRepTime: 0, topSpeed: 0, peakVelocities: [], consistencyScore: 0, measurementStatus: 'REHEARSAL', unavailableReason: 'Rehearsal mode does not create a velocity measurement.' }), 1200); return; } if (!tracker.calibrated) { setPhase('CALIBRATE'); return; } setPhase('RECORD'); };
-  const reset = () => { tracker.resetTracker(); finished.current = false; setSummary({ reps: [], meanRepTime: 0, topSpeed: 0, peakVelocities: [], consistencyScore: 0 }); setPhase('SETUP'); setResult(null); setError(null); };
-  if (phase === 'RECOVERY') return <View style={[styles.root, { paddingTop: insets.top }]}><Recovery colors={colors} onBack={() => setPhase('FEEDBACK')} /></View>;
-  if (phase === 'FEEDBACK') return <View style={[styles.root, { paddingTop: insets.top }]}><Feedback result={result} fallback={summary} error={error} colors={colors} onRecovery={() => setPhase('RECOVERY')} onRestart={reset} unitSystem={unitSystem} weightKg={displayWeightKg} exerciseName={exerciseName.trim() || 'Exercise'} /></View>;
-  if (phase === 'PROCESSING') return <View style={styles.center}><ActivityIndicator color="#FFFF00" size="large" /><Text style={styles.title}>Analyzing your set</Text><Text style={styles.body}>Integrating motion, checking load-matched readiness, and requesting grounded coaching…</Text></View>;
-   if (phase === 'SETUP' || phase === 'CALIBRATE') return <ScrollView contentContainerStyle={[styles.page, { paddingTop: insets.top + 24 }]}><Text style={styles.eyebrow}>FREELOCITY · VBT COACH</Text><Text style={styles.title}>One reliable set story.</Text><Text style={styles.body}>Choose the movement first so your measured set can be compared with the right velocity profile.</Text>{phase === 'SETUP' && <Button label="OPEN GYM DIARY" secondary onPress={() => router.push('/diary')} />}<View style={styles.stepper}><Text style={phase === 'SETUP' ? styles.stepActive : styles.step}>1 SETUP</Text><Text style={phase === 'CALIBRATE' ? styles.stepActive : styles.step}>2 CALIBRATE</Text><Text style={styles.step}>3 SET</Text><Text style={styles.step}>4 FEEDBACK</Text></View>{phase === 'CALIBRATE' ? <View style={styles.card}><Text style={styles.cardTitle}>{exerciseName.trim() || 'Exercise'} · IMU rest calibration</Text><Text style={styles.body}>Secure the phone to the barbell/load with its Y-axis aligned to movement, hold perfectly still for one second, then capture the gravity baseline. Camera preview is visual-only and does not measure velocity.</Text><Text style={calibrationState === 'READY' ? styles.success : calibrationState === 'FAILED' ? styles.warning : styles.caption}>{calibrationState === 'CAPTURING' ? 'Capturing rest samples…' : calibrationState === 'READY' ? 'Rest calibration captured · Y-axis IMU measurement enabled' : calibrationState === 'FAILED' ? 'Calibration was unstable. Hold still and retry.' : 'Velocity remains unavailable until rest calibration succeeds.'}</Text><Button label={calibrationState === 'CAPTURING' ? 'CAPTURING REST…' : 'CAPTURE 1-SECOND REST'} disabled={calibrationState === 'CAPTURING'} onPress={captureRestCalibration} /><Button label="START CALIBRATED IMU SET" disabled={!tracker.calibrated || !exerciseName.trim()} onPress={start} /><Button label="BACK TO SETUP" secondary onPress={() => setPhase('SETUP')} /></View> : <><View style={styles.card}><Text style={styles.cardTitle}>Exercise setup</Text><Text style={styles.label}>EXERCISE TO FILM</Text><TextInput value={exerciseName} onChangeText={setExerciseName} autoCapitalize="words" style={styles.input} placeholder="Squat, bench press, deadlift…" placeholderTextColor="rgba(255,255,255,0.35)" /><View style={styles.row}><Button label="USE SQUAT DEMO" secondary={exerciseName.trim().toLowerCase() !== 'squat'} onPress={() => setExerciseName('Squat')} /></View><Text style={styles.caption}>Squat is the polished demo profile. Any exercise name can be analyzed, stored, and compared with its own history.</Text>{error && <Text style={styles.warning}>{error}</Text>}<Text style={styles.label}>LOAD · {getUnitConfig(unitSystem).abbreviation.toUpperCase()}</Text><TextInput value={weight} onChangeText={setWeight} keyboardType="decimal-pad" style={styles.input} placeholder={`Enter ${getUnitConfig(unitSystem).name}`} placeholderTextColor="rgba(255,255,255,0.35)" /><Text style={styles.label}>MEASUREMENT PLACEMENT</Text><Text style={styles.success}>BARBELL-MOUNTED IMU · Y AXIS</Text><Text style={styles.label}>TARGET REPS</Text><TextInput value={targetReps} onChangeText={setTargetReps} keyboardType="number-pad" style={styles.input} /><View style={styles.switchRow}><Text style={styles.body}>Rehearsal-only fallback</Text><Switch value={demoMode} onValueChange={setDemoMode} /></View><Text style={styles.caption}>{demoMode ? 'REHEARSAL: no velocity, readiness, or AI coaching is submitted.' : 'LIVE IMU: the phone must be secured to the barbell. Camera preview is not a CV velocity source.'}</Text></View><View style={styles.card}><Text style={styles.cardTitle}>Settings & data</Text><Text style={styles.label}>MASS UNITS</Text><UnitToggle value={unitSystem} onChange={changeUnit} /><Text style={styles.caption}>Imperial is the default. Your preference is saved on this device; analytics and baselines stay canonical in kg.</Text></View><HistoryCard rows={historyQuery.data ?? []} unitSystem={unitSystem} loading={historyQuery.isLoading} /><Button label={demoMode ? 'START REHEARSAL' : tracker.calibrated ? `START ${exerciseName.trim().toUpperCase() || 'EXERCISE'} SET` : 'CALIBRATE IMU BEFORE SET'} disabled={!exerciseName.trim()} onPress={start} secondary /></>}</ScrollView>;
-  return <View style={styles.root}>{permission?.granted && <CameraView facing="back" style={StyleSheet.absoluteFillObject} />}<View style={styles.shade} /><View style={[styles.record, { paddingTop: insets.top + 22 }]}><Text style={styles.eyebrow}>{demoMode ? 'REHEARSAL · NOT MEASURED' : 'CALIBRATED IMU · Y AXIS'}</Text><Text style={styles.title}>{exerciseName.trim() || 'Exercise'} set in progress</Text><View style={styles.liveCard}><Metric label="REPS DETECTED" value={String(tracker.reps.length)} /><Metric label="VELOCITY" value={tracker.currentVelocity == null ? 'Unavailable' : `${tracker.currentVelocity.toFixed(2)} m/s`} note={tracker.currentVelocity == null ? 'awaiting valid movement' : 'calibrated IMU estimate'} /><Text style={styles.body}>{demoMode ? 'Rehearsal is running. No velocity, coaching, or readiness will be generated.' : 'Camera preview is visual-only. A valid m/s value comes only from the calibrated IMU.'}</Text></View><View style={styles.recordActions}><Button label="STOP & REVIEW" onPress={() => finish()} /></View><Text style={styles.caption}>Measurement source: {demoMode ? 'rehearsal_seeded' : `imu_${placement}`}. Do not use a stationary side-camera phone for bar velocity.</Text></View></View>;
+
+  const begin = useCallback(async () => {
+    if (!exerciseName.trim() || weightKg <= 0 || Number(targetReps) < 1) {
+      setError('Enter an exercise, a positive load, and at least one target repetition.');
+      return;
+    }
+    if (isSquat && (!Number.isFinite(plateDiameterMm) || plateDiameterMm < 100 || plateDiameterMm > 1000)) {
+      setError('Enter a plate or sleeve diameter between 100 and 1000 mm for Squat CV.');
+      return;
+    }
+    if (isSquat && !permission?.granted) {
+      const granted = await requestPermission();
+      if (!granted.granted) { setError('Camera permission is required for the Squat CV path.'); return; }
+    }
+    setError(null);
+    if (demoMode) { setSummary({ reps: [], meanRepTime: 0, topSpeed: 0, peakVelocities: [], consistencyScore: 0, measurementStatus: 'REHEARSAL', unavailableReason: 'Rehearsal mode never creates a velocity measurement.' }); setPhase('FEEDBACK'); return; }
+    if (isSquat) {
+      setPhase('CALIBRATE');
+      return;
+    }
+    if (!tracker.calibrated) { setPhase('CALIBRATE'); return; }
+    imuSamples.current = [];
+    startedAt.current = Date.now();
+    finalized.current = false;
+    setPhase('RECORD');
+  }, [demoMode, exerciseName, isSquat, permission?.granted, plateDiameterMm, requestPermission, targetReps, tracker.calibrated, weightKg]);
+
+  const startRecording = () => {
+    imuSamples.current = [];
+    cvFrames.current = [];
+    lastCvFrameAt.current = null;
+    manualBounds.length && setManualBounds([]);
+    startedAt.current = Date.now();
+    finalized.current = false;
+    setTrackingLost(false);
+    setPhase('RECORD');
+  };
+
+  const submit = useCallback(async (nextSummary: SetSummary, manualRepBoundsUsed: boolean) => {
+    const reps = nextSummary.reps;
+    if (reps.length === 0) {
+      setSummary({ ...nextSummary, measurementStatus: 'UNAVAILABLE', unavailableReason: 'No complete calibrated repetitions were detected.' });
+      setPhase('FEEDBACK');
+      return;
+    }
+    setSummary(nextSummary);
+    setPhase('PROCESSING');
+    try {
+      const payload = isSquat ? {
+        exercise_name: 'Squat',
+        weight_kg: weightKg,
+        display_unit: unitSystem,
+        display_load: Number(weight),
+        target_reps: Number(targetReps),
+        total_sets: 1,
+        plate_diameter_mm: plateDiameterMm,
+        mean_velocity_ms: reps.reduce((sum, rep) => sum + (rep.meanVelocity ?? 0), 0) / reps.length,
+        peak_velocity_ms: Math.max(...reps.map((rep) => rep.peakVelocity ?? 0)),
+        first_rep_peak_ms: reps[0]?.peakVelocity ?? null,
+        rep_peaks_ms: reps.map((rep) => rep.peakVelocity ?? 0),
+        actual_reps: reps.length,
+        duration_s: (Date.now() - startedAt.current) / 1000,
+        sample_count: cvFrames.current.length,
+        manual_rep_bounds_used: manualRepBoundsUsed,
+      } : {
+        exercise_name: 'Lat Pulldown',
+        weight_kg: weightKg,
+        display_unit: unitSystem,
+        display_load: Number(weight),
+        target_reps: Number(targetReps),
+        total_sets: 1,
+        phone_placement: 'weight_stack' as const,
+        samples: imuSamples.current,
+      };
+      const response = await analyzeSet(payload);
+      setResult(response);
+      setPhase('FEEDBACK');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Set analysis failed.');
+      setPhase('FEEDBACK');
+    }
+  }, [isSquat, plateDiameterMm, targetReps, unitSystem, weight, weightKg]);
+
+  const stopRecording = () => {
+    if (finalized.current) return;
+    finalized.current = true;
+    if (!isSquat) {
+      const completed = tracker.stopSet().completedSet ?? summary;
+      const decorated = { ...completed, durationSec: (Date.now() - startedAt.current) / 1000, sampleCount: imuSamples.current.length, inferenceSource: 'IMU' as const, limitations: ['Phone is mounted to the Lat Pulldown weight stack; Z-axis IMU estimate.'] };
+      void submit(decorated, false);
+      return;
+    }
+    const frames = trimRackingNoise(cvFrames.current, Date.now());
+    cvFrames.current = frames;
+    const cvSummary = tracker.stopSet().completedSet ?? summary;
+    if (needsManualCvReview(frames, cvSummary.reps)) {
+      setSummary({ ...cvSummary, measurementStatus: 'UNAVAILABLE', unavailableReason: 'CV tracking did not produce enough confident frame data. Review the timeline or retake with better lighting and a perpendicular camera.' });
+      setPhase('POST_REVIEW');
+      return;
+    }
+    void submit({ ...cvSummary, inferenceSource: 'MANUAL', sampleCount: frames.length, durationSec: (Date.now() - startedAt.current) / 1000 }, false);
+  };
+
+  const applyManualReview = () => {
+    const reps = deriveCvRepMetrics(cvFrames.current, manualBounds);
+    const updated: SetSummary = {
+      reps,
+      meanRepTime: reps.length ? reps.reduce((sum, rep) => sum + rep.repTimeSec, 0) / reps.length : 0,
+      topSpeed: Math.max(0, ...reps.map((rep) => rep.peakVelocity ?? 0)),
+      peakVelocities: reps.map((rep) => rep.peakVelocity ?? 0),
+      consistencyScore: 0,
+      measurementStatus: reps.length ? 'MEASURED' : 'UNAVAILABLE',
+      unavailableReason: reps.length ? undefined : 'Manual ranges need tracked CV frames. Retake with the plate clearly visible in the camera guide.',
+      inferenceSource: 'MANUAL',
+      sampleCount: cvFrames.current.length,
+      durationSec: (Date.now() - startedAt.current) / 1000,
+    };
+    if (!reps.length) { setSummary(updated); setPhase('FEEDBACK'); return; }
+    void submit(updated, true);
+  };
+
+  const reset = () => {
+    tracker.resetTracker();
+    setPhase('SETUP'); setCalibration('IDLE'); setResult(null); setError(null); setCameraReady(false); setTrackingLost(false); setManualBounds([]);
+    setSummary({ reps: [], meanRepTime: 0, topSpeed: 0, peakVelocities: [], consistencyScore: 0 });
+  };
+
+  if (phase === 'RECOVERY') return <View style={[styles.root, { paddingTop: insets.top }]}><Recovery onBack={() => setPhase('FEEDBACK')} /></View>;
+  if (phase === 'FEEDBACK') return <View style={[styles.root, { paddingTop: insets.top }]}><Feedback exerciseName={exerciseName} unitSystem={unitSystem} weightKg={weightKg} summary={summary} result={result} error={error} onRestart={reset} onRecovery={() => setPhase('RECOVERY')} /></View>;
+  if (phase === 'PROCESSING') return <View style={styles.center}><ActivityIndicator color="#FFFF00" size="large" /><Text style={styles.title}>Analyzing your set</Text><Text style={styles.body}>Checking load-matched history, readiness, and evidence-based coaching…</Text></View>;
+
+  if (phase === 'POST_REVIEW') return <ScrollView contentContainerStyle={[styles.page, { paddingTop: insets.top + 20 }]}>
+    <Text style={styles.eyebrow}>SQUAT CV · POST-SET REVIEW</Text><Text style={styles.title}>Confirm rep ranges</Text>
+    <Text style={styles.body}>Tracking was low confidence or rep boundaries were incomplete. Racking noise has been excluded. Add start/end frame ranges only when the plate was visibly tracked.</Text>
+    <View style={styles.timeline}>{cvFrames.current.length ? cvFrames.current.map((frame, index) => <View key={`${frame.timestamp}-${index}`} style={[styles.timelineMark, frame.tracked ? styles.timelineTracked : styles.timelineLost]} />) : <Text style={styles.caption}>No usable camera frames reached the local CV tracker. Retake with the plate fully visible, profile-on, and well lit.</Text>}</View>
+    <View style={styles.card}><Text style={styles.cardTitle}>Manual rep bounds</Text><Text style={styles.caption}>Frame indices are local to this set. Add a range for each complete descent-and-ascent repetition.</Text>
+      <View style={styles.row}><Button label="ADD REP RANGE" onPress={() => setManualBounds((bounds) => [...bounds, { startIndex: 0, endIndex: Math.max(1, cvFrames.current.length - 1) }])} secondary /></View>
+      {manualBounds.map((bound, index) => <View key={index} style={styles.boundsRow}><Text style={styles.repName}>REP {index + 1}</Text><TextInput value={String(bound.startIndex)} keyboardType="number-pad" onChangeText={(value) => setManualBounds((all) => all.map((item, position) => position === index ? { ...item, startIndex: Number(value) || 0 } : item))} style={styles.boundsInput} /><Text style={styles.caption}>to</Text><TextInput value={String(bound.endIndex)} keyboardType="number-pad" onChangeText={(value) => setManualBounds((all) => all.map((item, position) => position === index ? { ...item, endIndex: Number(value) || 0 } : item))} style={styles.boundsInput} /></View>)}
+      <Button label="RECALCULATE FROM MANUAL RANGES" disabled={!manualBounds.length} onPress={applyManualReview} />
+    </View><Button label="RETAKE SQUAT SET" secondary onPress={reset} />
+  </ScrollView>;
+
+  if (phase === 'CALIBRATE') return <ScrollView contentContainerStyle={[styles.page, { paddingTop: insets.top + 20 }]}>
+    <Text style={styles.eyebrow}>{isSquat ? 'SQUAT · CAMERA CALIBRATION' : 'LAT PULLDOWN · IMU CALIBRATION'}</Text><Text style={styles.title}>{isSquat ? 'Lock the plate view.' : 'Capture still rest.'}</Text>
+    {isSquat ? <View style={styles.card}>
+      <Text style={styles.cardTitle}>Profile-view camera only</Text><Text style={styles.body}>Another person films from exactly perpendicular to the lifter at hip/knee height. Keep the full plate or sleeve visible; do not attach the phone to the barbell.</Text>
+      <Text style={styles.caption}>Scale: {plateDiameterMm} mm. Lighting, occlusion, and perspective affect CV accuracy; this is not a laboratory-grade force plate.</Text>
+      {!permission?.granted ? <Button label="ALLOW CAMERA" onPress={() => { void requestPermission(); }} /> : <View style={styles.cameraPreview}><CameraView ref={cameraRef} facing="back" style={StyleSheet.absoluteFillObject} onCameraReady={() => setCameraReady(true)} /><View pointerEvents="none" style={[styles.trackingBox, !cameraReady && styles.trackingBoxLost]} /><Text style={styles.cameraLabel}>{cameraReady ? 'ALIGN PLATE IN RED GUIDE' : 'STARTING CAMERA…'}</Text></View>}
+      <Button label="CONFIRM PLATE IN GUIDE" disabled={!cameraReady} onPress={() => { tracker.setCustomReference(plateDiameterMm / 1000, 300); setCalibration('READY'); }} />
+      {calibration === 'READY' ? <Text style={styles.success}>Camera guide confirmed. Begin only while the camera remains profile-on.</Text> : null}
+      <Button label="START SQUAT RECORDING" disabled={calibration !== 'READY'} onPress={startRecording} />
+    </View> : <View style={styles.card}>
+      <Text style={styles.cardTitle}>Weight-stack IMU</Text><Text style={styles.body}>Secure the phone to the Lat Pulldown weight stack with its Z axis aligned to the stack movement. Hold it perfectly still for one second; video is not used in this mode.</Text>
+      <Text style={[styles.caption, calibration === 'FAILED' && styles.warning]}>{calibration === 'CAPTURING' ? 'Capturing 50 Hz rest baseline…' : calibration === 'READY' ? 'Rest baseline captured · Z-axis IMU enabled' : calibration === 'FAILED' ? 'Calibration was unstable. Keep the stack still and retry.' : 'Velocity remains unavailable until rest calibration succeeds.'}</Text>
+      <Button label={calibration === 'CAPTURING' ? 'CAPTURING REST…' : 'CAPTURE 1-SECOND REST'} disabled={calibration === 'CAPTURING'} onPress={calibrateImu} /><Button label="START LAT PULLDOWN SET" disabled={calibration !== 'READY'} onPress={startRecording} />
+    </View>}
+    <Button label="BACK TO SETUP" secondary onPress={() => setPhase('SETUP')} />
+  </ScrollView>;
+
+  if (phase === 'SETUP') return <ScrollView contentContainerStyle={[styles.page, { paddingTop: insets.top + 20 }]}>
+    <Text style={styles.eyebrow}>FREELOCITY · VBT COACH</Text><Text style={styles.title}>Choose the measurement.</Text><Text style={styles.body}>Squat uses local camera-based plate movement. Lat Pulldown uses the phone’s Z-axis accelerometer on the weight stack.</Text>
+    <Button label="OPEN GYM DIARY" secondary onPress={() => router.push('/diary')} />
+    <View style={styles.card}><Text style={styles.cardTitle}>Exercise</Text><View style={styles.row}><Button label="SQUAT · CAMERA CV" secondary={!isSquat} onPress={() => { setExerciseName('Squat'); setCalibration('IDLE'); tracker.resetTracker(); }} /><Button label="LAT PULLDOWN · IMU" secondary={isSquat} onPress={() => { setExerciseName('Lat Pulldown'); setCalibration('IDLE'); tracker.resetTracker(); }} /></View><Text style={styles.caption}>{isSquat ? 'A training partner films from the side. Keep the camera perpendicular—an oval plate breaks spatial scale.' : 'Mount the phone securely to the weight stack. The camera is not used.'}</Text></View>
+    <View style={styles.card}><Text style={styles.cardTitle}>Set setup</Text><Text style={styles.label}>LOAD · {getUnitConfig(unitSystem).abbreviation.toUpperCase()}</Text><TextInput value={weight} onChangeText={setWeight} keyboardType="decimal-pad" style={styles.input} /><Text style={styles.label}>TARGET REPS</Text><TextInput value={targetReps} onChangeText={setTargetReps} keyboardType="number-pad" style={styles.input} />{isSquat ? <><Text style={styles.label}>PLATE / SLEEVE DIAMETER · MM</Text><TextInput value={plateDiameter} onChangeText={setPlateDiameter} keyboardType="number-pad" style={styles.input} /><Text style={styles.caption}>Defaults to a standard 450 mm plate. This measurement sets the CV pixel-to-meter scale.</Text></> : null}<View style={styles.switchRow}><Text style={styles.body}>Rehearsal-only fallback</Text><Switch value={demoMode} onValueChange={setDemoMode} /></View><Text style={styles.caption}>{demoMode ? 'Rehearsal never saves velocity, readiness, or AI coaching.' : isSquat ? 'Live Squat uses the rear camera only; no barbell-mounted phone.' : 'Live Lat Pulldown records timestamped Z-axis accelerometer samples at 50 Hz.'}</Text></View>
+    <View style={styles.card}><Text style={styles.cardTitle}>Mass units</Text><UnitToggle value={unitSystem} onChange={changeUnit} /><Text style={styles.caption}>Imperial is the default display. Stored loads and comparisons remain canonical kilograms.</Text></View>
+    {error ? <Text style={styles.warning}>{error}</Text> : null}<Button label={demoMode ? 'START REHEARSAL' : isSquat ? 'CALIBRATE SQUAT CAMERA' : 'CALIBRATE LAT PULLDOWN IMU'} onPress={() => { void begin(); }} />
+  </ScrollView>;
+
+  return <View style={styles.root}>{isSquat ? <CameraView ref={cameraRef} facing="back" style={StyleSheet.absoluteFillObject} onCameraReady={() => setCameraReady(true)} /> : null}<View style={styles.shade} /><View style={[styles.record, { paddingTop: insets.top + 20 }]}><Text style={styles.eyebrow}>{isSquat ? trackingLost ? 'CV TRACKING LOST' : 'SQUAT CV · PROFILE VIEW' : 'LAT PULLDOWN IMU · Z AXIS'}</Text><Text style={styles.title}>{exerciseName} set in progress</Text>{isSquat ? <View style={[styles.trackingBox, trackingLost && styles.trackingBoxLost]} /> : null}<View style={styles.liveCard}><Metric label="REPS DETECTED" value={String(tracker.reps.length)} /><Metric label="VELOCITY" value={tracker.currentVelocity == null ? 'Awaiting data' : `${tracker.currentVelocity.toFixed(2)} m/s`} note={isSquat ? Platform.OS === 'web' ? 'local CV estimate · 5 Hz snapshots' : 'withheld: native frame decode unavailable' : 'Z-axis IMU estimate'} /><Text style={styles.body}>{isSquat ? Platform.OS !== 'web' ? 'This build cannot decode camera frames locally, so Squat velocity will be withheld. Use the web build for the supported CV snapshot path; no values are estimated.' : trackingLost ? 'Tracking paused. Lost frames are excluded; restore the plate to the guide before continuing.' : 'Keep the plate inside the red guide. Tap Stop before racking the bar.' : 'Phone stays secured on the stack. Direction changes determine repetitions; no video is recorded.'}</Text></View><View style={styles.recordActions}>{isSquat ? <Button label={trackingLost ? 'RESUME TRACKING' : 'MARK TRACKING LOST'} secondary onPress={() => setTrackingLost((lost) => !lost)} /> : null}<Button label="STOP & REVIEW" onPress={stopRecording} /></View><Text style={styles.caption}>{isSquat ? 'Manual Stop trims final racking noise. Low-confidence captures open post-set review.' : 'At least 20 timestamped samples are required. Do not move the phone off the stack.'}</Text></View></View>;
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#07151F' }, page: { backgroundColor: '#07151F', padding: 20, gap: 16, paddingBottom: 40, flexGrow: 1 }, center: { flex: 1, backgroundColor: '#07151F', alignItems: 'center', justifyContent: 'center', padding: 28, gap: 16 }, record: { flex: 1, padding: 20, gap: 18 }, shade: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.55)' }, eyebrow: { color: '#FFFF00', fontSize: 11, fontWeight: '900', letterSpacing: 1.4 }, title: { color: '#FFFFFF', fontSize: 32, fontWeight: '900', letterSpacing: -1 }, body: { color: 'rgba(255,255,255,0.68)', fontSize: 14, lineHeight: 21 }, caption: { color: 'rgba(255,255,255,0.48)', fontSize: 11, lineHeight: 16 }, stepper: { flexDirection: 'row', justifyContent: 'space-between' }, step: { color: 'rgba(255,255,255,0.35)', fontSize: 9, fontWeight: '900' }, stepActive: { color: '#00FF88', fontSize: 9, fontWeight: '900' }, card: { backgroundColor: '#102633', borderColor: 'rgba(255,255,255,0.14)', borderWidth: 1, borderRadius: 18, padding: 16, gap: 12 }, cardTitle: { color: '#FFFFFF', fontSize: 18, fontWeight: '800' }, label: { color: 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: '900', letterSpacing: 1 }, input: { color: '#FFFFFF', borderBottomColor: 'rgba(255,255,255,0.3)', borderBottomWidth: 1, fontSize: 20, paddingVertical: 7 }, row: { flexDirection: 'row', gap: 10 }, button: { backgroundColor: '#00A99D', borderRadius: 13, minHeight: 48, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16, flex: 1 }, secondaryButton: { backgroundColor: 'transparent', borderColor: '#00FF88', borderWidth: 1 }, buttonText: { color: '#FFFFFF', fontSize: 11, fontWeight: '900', letterSpacing: 0.7 }, secondaryButtonText: { color: '#00FF88' }, switchRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' }, unitToggle: { flexDirection: 'row', gap: 8 }, unitOption: { flex: 1, borderColor: 'rgba(255,255,255,0.18)', borderWidth: 1, borderRadius: 12, padding: 10 }, unitOptionActive: { backgroundColor: '#00A99D', borderColor: '#00FF88' }, unitOptionText: { color: 'rgba(255,255,255,0.65)', fontSize: 12, fontWeight: '800' }, unitOptionTextActive: { color: '#FFFFFF' }, unitOptionSubtext: { color: 'rgba(255,255,255,0.45)', fontSize: 10, marginTop: 3 }, historyList: { borderTopColor: 'rgba(255,255,255,0.12)', borderTopWidth: 1 }, historyRow: { alignItems: 'center', borderBottomColor: 'rgba(255,255,255,0.08)', borderBottomWidth: 1, flexDirection: 'row', paddingVertical: 9 }, historySet: { color: 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: '800', width: 52 }, historyLoad: { color: '#FFFFFF', fontSize: 13, fontWeight: '800', width: 78 }, historyMeta: { color: 'rgba(255,255,255,0.52)', flex: 1, fontSize: 11 }, source: { backgroundColor: '#183B3D', borderRadius: 14, padding: 14, gap: 6 }, sourceText: { color: '#00FF88', fontSize: 11, fontWeight: '900', letterSpacing: 1 }, grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, metric: { backgroundColor: '#102633', borderRadius: 14, minHeight: 94, padding: 12, width: '48%' }, metricLabel: { color: 'rgba(255,255,255,0.5)', fontSize: 9, fontWeight: '900' }, metricValue: { color: '#FFFFFF', fontSize: 22, fontWeight: '900', marginTop: 10 }, metricNote: { color: '#00FF88', fontSize: 10, marginTop: 4 }, repRow: { borderTopColor: 'rgba(255,255,255,0.1)', borderTopWidth: 1, gap: 4, paddingVertical: 10 }, repName: { color: '#FFFF00', fontSize: 11, fontWeight: '900' }, repMetric: { color: 'rgba(255,255,255,0.7)', fontSize: 12 }, readiness: { color: '#FFFF00', fontSize: 36, fontWeight: '900' }, disclaimer: { color: '#FFB66D', fontSize: 11, marginTop: 12 }, warning: { color: '#FF8069', fontSize: 14, fontWeight: '800', lineHeight: 20, marginTop: 10 }, success: { color: '#00FF88', fontSize: 12 }, question: { borderTopColor: 'rgba(255,255,255,0.1)', borderTopWidth: 1, gap: 8, paddingTop: 12 }, result: { borderTopColor: 'rgba(255,255,255,0.15)', borderTopWidth: 1, gap: 8, marginTop: 8, paddingTop: 14 }, liveCard: { backgroundColor: 'rgba(7,21,31,0.88)', borderRadius: 18, padding: 18, gap: 14 }, recordActions: { flexDirection: 'row', gap: 10, marginTop: 'auto' },
+  root: { flex: 1, backgroundColor: '#07151F' }, page: { backgroundColor: '#07151F', padding: 20, paddingBottom: 42, gap: 16, flexGrow: 1 }, center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#07151F', padding: 28, gap: 14 }, record: { flex: 1, padding: 20, gap: 16 }, shade: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(7,21,31,0.57)' }, eyebrow: { color: '#FFFF00', fontSize: 11, fontWeight: '900', letterSpacing: 1.3 }, title: { color: '#FFFFFF', fontSize: 32, fontWeight: '900', letterSpacing: -1 }, body: { color: 'rgba(255,255,255,0.7)', fontSize: 14, lineHeight: 21 }, caption: { color: 'rgba(255,255,255,0.5)', fontSize: 11, lineHeight: 16 }, warning: { color: '#FF8069', fontSize: 13, fontWeight: '800', lineHeight: 19 }, success: { color: '#00FF88', fontSize: 12, fontWeight: '800', lineHeight: 18 }, card: { backgroundColor: '#102633', borderColor: 'rgba(255,255,255,0.14)', borderWidth: 1, borderRadius: 18, padding: 16, gap: 12 }, cardTitle: { color: '#FFFFFF', fontSize: 18, fontWeight: '800' }, label: { color: 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: '900', letterSpacing: 1 }, input: { color: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.28)', fontSize: 20, paddingVertical: 7 }, row: { flexDirection: 'row', gap: 8 }, button: { flex: 1, minHeight: 48, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#00A99D', borderRadius: 13 }, buttonSecondary: { backgroundColor: 'transparent', borderWidth: 1, borderColor: '#00FF88' }, buttonText: { color: '#FFFFFF', fontSize: 11, fontWeight: '900', letterSpacing: 0.7, textAlign: 'center' }, buttonSecondaryText: { color: '#00FF88' }, switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, unitToggle: { flexDirection: 'row', gap: 8 }, unit: { flex: 1, borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)', borderRadius: 12, padding: 10 }, unitSelected: { backgroundColor: '#00A99D', borderColor: '#00FF88' }, unitText: { color: 'rgba(255,255,255,0.7)', fontSize: 12, fontWeight: '800' }, unitTextSelected: { color: '#FFFFFF' }, cameraPreview: { height: 220, overflow: 'hidden', borderRadius: 14, backgroundColor: '#07151F', justifyContent: 'center', alignItems: 'center' }, cameraLabel: { color: '#FFFFFF', backgroundColor: 'rgba(0,0,0,0.54)', padding: 7, borderRadius: 7, fontSize: 10, fontWeight: '900', letterSpacing: 0.8 }, trackingBox: { position: 'absolute', alignSelf: 'center', top: '28%', width: 148, height: 148, borderWidth: 3, borderColor: '#FF3B30', borderRadius: 6 }, trackingBoxLost: { borderStyle: 'dashed', borderColor: '#FF8069', opacity: 0.6 }, liveCard: { backgroundColor: 'rgba(7,21,31,0.9)', borderRadius: 18, padding: 16, gap: 12, marginTop: 'auto' }, grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, metric: { width: '48%', minHeight: 92, backgroundColor: '#102633', padding: 12, borderRadius: 14 }, metricLabel: { color: 'rgba(255,255,255,0.5)', fontSize: 9, fontWeight: '900' }, metricValue: { color: '#FFFFFF', fontSize: 21, fontWeight: '900', marginTop: 10 }, metricNote: { color: '#00FF88', fontSize: 10, marginTop: 4 }, source: { backgroundColor: '#183B3D', borderRadius: 14, padding: 14, gap: 6 }, sourceText: { color: '#00FF88', fontSize: 11, fontWeight: '900', letterSpacing: 1 }, repRow: { flexDirection: 'row', gap: 8, paddingVertical: 10, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.1)' }, repName: { color: '#FFFF00', fontSize: 11, fontWeight: '900', minWidth: 42 }, repMetric: { color: 'rgba(255,255,255,0.7)', fontSize: 11, flex: 1 }, readiness: { color: '#FFFF00', fontSize: 36, fontWeight: '900' }, recordActions: { flexDirection: 'row', gap: 10 }, timeline: { minHeight: 62, padding: 12, borderRadius: 14, backgroundColor: '#102633', flexDirection: 'row', flexWrap: 'wrap', gap: 3 }, timelineMark: { width: 5, height: 32, borderRadius: 2 }, timelineTracked: { backgroundColor: '#00FF88' }, timelineLost: { backgroundColor: '#FF8069' }, boundsRow: { flexDirection: 'row', alignItems: 'center', gap: 8 }, boundsInput: { width: 54, color: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.28)', textAlign: 'center', paddingVertical: 4 }
 });

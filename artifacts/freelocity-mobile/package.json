@@ -8,7 +8,7 @@
     "build": "node scripts/build.js",
     "serve": "node server/serve.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:tracker": "rm -rf .tracker-test && pnpm exec tsc src/lib/vbtTracker.ts --target ES2022 --module commonjs --outDir .tracker-test --skipLibCheck && node scripts/run-tracker-tests.cjs && rm -rf .tracker-test"
+    "test:tracker": "rm -rf .tracker-test && pnpm exec tsc src/lib/vbtTracker.ts src/lib/exerciseMeasurement.ts --target ES2022 --module commonjs --outDir .tracker-test --skipLibCheck && node scripts/run-tracker-tests.cjs && rm -rf .tracker-test"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

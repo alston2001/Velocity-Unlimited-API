@@ -7,13 +7,12 @@
  */
 
 /**
- * How the phone is mounted during the set. Affects which axis is used for velocity integration and how the AI coaching interprets the data.
+ * Lat Pulldown phone placement. The weight stack path uses the Z axis.
  */
 export type SetAnalysisRequestPhonePlacement = typeof SetAnalysisRequestPhonePlacement[keyof typeof SetAnalysisRequestPhonePlacement];
 
 
 export const SetAnalysisRequestPhonePlacement = {
   weight_stack: 'weight_stack',
-  barbell: 'barbell',
   pocket: 'pocket',
 } as const;

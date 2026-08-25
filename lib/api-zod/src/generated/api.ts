@@ -7,8 +7,8 @@
  */
 import * as zodV3 from 'zod';
 
-// Orval emits Zod v4 helpers while this workspace currently runs Zod v3.
-// Keep this small compatibility layer after every generated-client refresh.
+// Orval emits Zod v4 helpers while this workspace runs Zod v3.
+// Reapply this compatibility layer after every generated-client refresh.
 const zod = {
   ...zodV3,
   int: () => zodV3.number().int(),
@@ -24,17 +24,34 @@ export const ApiHomeResponse = zod.string()
 
 
 /**
- * Accepts a raw acceleration batch and returns velocity-integrated coaching feedback enriched with VBT profiles, CNS readiness score, and AI coaching text
+ * Accepts validated on-device CV metrics for Squats or a timestamped acceleration batch for Lat Pulldowns, then returns coaching feedback enriched with VBT profiles and readiness
  * @summary Analyze a set
  */
 
 export const analyzeSetBodyDisplayUnitDefault = `metric`;
 export const analyzeSetBodyPhonePlacementDefault = `weight_stack`;
+export const analyzeSetBodyPlateDiameterMmDefault = 450;
+export const analyzeSetBodyPlateDiameterMmMin = 100;
+export const analyzeSetBodyPlateDiameterMmMax = 1000;
+
+export const analyzeSetBodyMeanVelocityMsMin = 0;
+
+export const analyzeSetBodyPeakVelocityMsMin = 0;
+
+export const analyzeSetBodyFirstRepPeakMsMin = 0;
+
+export const analyzeSetBodyRepPeaksMsItemMin = 0;
+
+
+export const analyzeSetBodyDurationSMin = 0;
+
+
+export const analyzeSetBodyManualRepBoundsUsedDefault = false;
 
 export const AnalyzeSetBody = zod.object({
   "exercise_name": zod.string().min(1).describe('Name of the exercise (e.g. \"Bench Press\")'),
   "weight_kg": zod.number().describe('Load on the bar in kilograms'),
-  "measurement_source": zod.enum(['mobile_imu', 'test_fixture']).describe('Provenance declaration for the batch; only mobile_imu rows can contribute to readiness'),
+  "measurement_source": zod.enum(['computer_vision', 'mobile_imu', 'test_fixture']).nullish().describe('Optional legacy\/test provenance override. Production source is inferred from the exercise profile.'),
   "display_unit": zod.enum(['imperial', 'metric']).default(analyzeSetBodyDisplayUnitDefault).describe('User-facing mass unit used for load labels and coaching copy'),
   "display_load": zod.number().optional().describe('User-entered load in display_unit; weight_kg remains canonical'),
   "target_reps": zod.int().describe('Planned rep count for the set'),
@@ -44,15 +61,24 @@ export const AnalyzeSetBody = zod.object({
   "y": zod.number().describe('Y-axis acceleration in G'),
   "z": zod.number().describe('Z-axis acceleration in G'),
   "timestamp": zod.number().describe('Unix timestamp in milliseconds when the sample was captured')
-}).describe('A single three-axis accelerometer reading with a millisecond timestamp')).describe('Ordered raw acceleration samples captured during the set'),
-  "phone_placement": zod.enum(['weight_stack', 'barbell', 'pocket']).default(analyzeSetBodyPhonePlacementDefault).describe('How the phone is mounted during the set. Affects which axis is used for velocity integration and how the AI coaching interprets the data.')
+}).describe('A single three-axis accelerometer reading with a millisecond timestamp')).nullish().describe('Ordered raw acceleration samples captured during the set'),
+  "phone_placement": zod.enum(['weight_stack', 'pocket']).default(analyzeSetBodyPhonePlacementDefault).describe('Lat Pulldown phone placement. The weight stack path uses the Z axis.'),
+  "plate_diameter_mm": zod.int().min(analyzeSetBodyPlateDiameterMmMin).max(analyzeSetBodyPlateDiameterMmMax).nullish().default(analyzeSetBodyPlateDiameterMmDefault).describe('Squat plate or sleeve diameter used to scale camera pixels to meters'),
+  "mean_velocity_ms": zod.number().min(analyzeSetBodyMeanVelocityMsMin).nullish().describe('Pre-calculated on-device Squat mean velocity'),
+  "peak_velocity_ms": zod.number().min(analyzeSetBodyPeakVelocityMsMin).nullish().describe('Pre-calculated on-device Squat peak velocity'),
+  "first_rep_peak_ms": zod.number().min(analyzeSetBodyFirstRepPeakMsMin).nullish().describe('Pre-calculated first-repetition peak velocity'),
+  "rep_peaks_ms": zod.array(zod.number().min(analyzeSetBodyRepPeaksMsItemMin)).nullish().describe('Pre-calculated Squat per-repetition peak velocities'),
+  "actual_reps": zod.int().min(1).nullish().describe('Pre-calculated Squat repetition count'),
+  "duration_s": zod.number().min(analyzeSetBodyDurationSMin).nullish().describe('Pre-calculated Squat set duration'),
+  "sample_count": zod.int().min(1).nullish().describe('Number of CV frames used for the pre-calculated metrics'),
+  "manual_rep_bounds_used": zod.boolean().default(analyzeSetBodyManualRepBoundsUsedDefault).describe('Whether the athlete manually corrected Squat repetition bounds')
 }).describe('Exercise setup metadata and the raw sensor batch captured during a set')
 
 export const AnalyzeSetResponse = zod.object({
   "status": zod.enum(['success']),
   "exercise_name": zod.string(),
   "weight_kg": zod.number().describe('Canonical current-set load used to select the ±15% load-match band'),
-  "measurement_source": zod.enum(['mobile_imu', 'test_fixture']).describe('Declared current-set batch provenance; test_fixture rows are retained but excluded from readiness'),
+  "measurement_source": zod.enum(['computer_vision', 'mobile_imu', 'test_fixture']).describe('Measurement source inferred from the exercise profile'),
   "mean_velocity_ms": zod.number().describe('Mean bar velocity in m\/s integrated from the acceleration batch'),
   "peak_velocity_ms": zod.number().describe('Peak bar velocity in m\/s'),
   "first_rep_peak_ms": zod.number().nullable().describe('First-rep peak velocity in m\/s — primary CNS readiness marker. Null when fewer than 1 rep detected.'),
@@ -61,6 +87,8 @@ export const AnalyzeSetResponse = zod.object({
   "velocity_loss_pct": zod.number().nullable().describe('Velocity loss from first to last rep (%). Null when fewer than 2 reps detected.'),
   "fatigue_level": zod.string().nullable().describe('Qualitative fatigue classification based on velocity loss'),
   "sample_count": zod.int().describe('Number of samples processed'),
+  "plate_diameter_mm": zod.int().nullable().describe('Squat plate or sleeve diameter used for camera scaling'),
+  "manual_rep_bounds_used": zod.boolean().describe('Whether Squat rep bounds were manually corrected'),
   "duration_s": zod.number().describe('Total set duration in seconds'),
   "ai_feedback": zod.string().describe('AI-generated coaching feedback grounded in VBT standards'),
   "sparkden_history_used": zod.boolean().describe('Whether historical Sparkden session data was incorporated in the feedback'),

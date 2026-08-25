@@ -386,6 +386,8 @@ router.post("/analyze-set", async (req, res) => {
       plateDiameterMm === null ||
       !Number.isFinite(plateDiameterMm) ||
       plateDiameterMm < 100 ||
+      typeof cvMean !== "number" ||
+      typeof cvPeak !== "number" ||
       !Number.isFinite(cvMean) ||
       !Number.isFinite(cvPeak) ||
       cvMean < 0.05 ||
@@ -399,8 +401,8 @@ router.post("/analyze-set", async (req, res) => {
       });
       return;
     }
-    mean = cvMean;
-    peak = cvPeak;
+    mean = Number(cvMean);
+    peak = Number(cvPeak);
     repPeaks = cvRepPeaks;
     firstRepPeakMs = request.first_rep_peak_ms ?? cvRepPeaks[0] ?? null;
     actualReps = cvReps;
