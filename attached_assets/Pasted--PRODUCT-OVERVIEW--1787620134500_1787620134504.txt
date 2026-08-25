@@ -1,0 +1,164 @@
+==================================================
+PRODUCT OVERVIEW
+==================================================
+
+Freelocity Motion Tracker is an Expo mobile application for velocity-based training analysis.
+
+The application utilizes a dual-measurement architecture depending on the exercise:
+- SQUATS: Uses on-device classical Computer Vision (CV). The phone is positioned away from the lifter, tracking the movement of the weight plate through space based on a user-provided plate diameter to calculate scale and velocity locally.
+- LAT PULLDOWNS: Uses the phone's internal accelerometer (IMU). The phone is secured to the weight stack to track movement and stabilize the measurement.
+
+The core product lets a user:
+- Select an exercise (Squat or Lat Pulldown) before recording.
+- Enter a training load, target reps, and units.
+- Enter plate diameter (CV exercises only).
+- Calibrate the measurement tool (Visual plate identification for CV, stationary rest for IMU).
+- Record a live training set.
+- Detect repetitions and calculate mean/peak velocities on-device.
+- Calculate first-repetition peak velocity and velocity loss.
+- Persist analyzed set metrics.
+- Generate evidence-based AI coaching and calculate readiness scores.
+- Record daily gym-diary notes and a separate recovery check-in.
+
+==================================================
+CURRENT ARTIFACTS
+==================================================
+
+Existing registered artifacts:
+- artifacts/freelocity-mobile (Expo application)
+- artifacts/api-server (Express application)
+- artifacts/mockup-sandbox (Vite-based preview environment)
+
+==================================================
+TECHNOLOGY STACK
+==================================================
+
+- pnpm workspaces, Node.js, TypeScript, Expo, React Native
+- Express 5, PostgreSQL, Drizzle ORM, Zod, OpenAPI, Orval
+- The API and mobile projects communicate through the generated API client.
+
+==================================================
+MOBILE USER FLOW
+==================================================
+
+SETUP:
+- User enters an exercise name (e.g., Squat or Lat Pulldown).
+- User enters a load and target reps.
+- User chooses imperial or metric units.
+- If CV exercise (Squat), user inputs the plate diameter for spatial scaling.
+- Rehearsal mode can be enabled for UI review.
+
+CALIBRATE:
+- For IMU (Lat Pulldown): Phone must remain still on the stack. Lasts ~1 second. Baseline rest acceleration is captured.
+- For CV (Squat): The camera identifies the plate boundary based on the inputted diameter.
+- Live recording is disabled until calibration succeeds. Calibration failure must be explicit.
+
+RECORD:
+- For IMU: Live mode uses Expo Accelerometer on the Z axis (weight stack).
+- For CV: Classical CV tracks the plate's vertical displacement frame-by-frame.
+- Velocity is calculated locally on-device.
+- The UI displays detected reps and current velocity.
+
+PROCESSING:
+- The UI displays a loading state.
+- The API receives the *pre-calculated* metrics and validation data from the device.
+- The API calculates readiness, historical comparison, and AI coaching.
+- The API implicitly infers the measurement source from the exercise name (Squat = CV, Lat Pulldown = IMU).
+
+==================================================
+SENSOR & VISION RULES (IMU & CV)
+==================================================
+
+COMPUTER VISION (SQUAT):
+- Relies on classical CV techniques (e.g., circle detection/edge detection on the plate).
+- Pixel-to-meter conversion relies entirely on the user-inputted plate diameter.
+- Velocity is calculated locally by tracking the plate's vertical change across frame timestamps.
+- Camera frame rate and lighting conditions affect reliability.
+
+IMU (LAT PULLDOWN):
+- Uses Expo Accelerometer (Z axis for weight stack).
+- Requires at least 20 timestamped samples. Baseline rest acceleration is subtracted.
+- Acceleration is scaled using ~9.81 m/s². Timestamp deltas determine integration intervals.
+- Small acceleration values are damped toward zero. Integrated velocity is bounded.
+
+HONESTY:
+- The app must state limitations: CV depends on lighting and exact plate diameter. IMU depends on attachment stability and calibration. Neither is a laboratory-grade force plate.
+
+==================================================
+API CONTRACT & PROVENANCE
+==================================================
+
+POST /api/analyze-set
+
+Request fields include:
+- exercise_name
+- weight_kg
+- display_unit
+- display_load
+- target_reps
+- plate_diameter_mm (nullable, required for CV)
+- mean_velocity_ms
+- peak_velocity_ms
+- first_rep_peak_ms
+- rep_data (array of rep intervals)
+- samples (for IMU) or tracking_confidence (for CV)
+
+PROVENANCE:
+- `measurement_source` is NO LONGER explicitly passed by the client.
+- The database schema and backend logic *implicitly infer* the measurement source from `exercise_name`.
+  - Squat -> `computer_vision`
+  - Lat Pulldown -> `mobile_imu`
+- Both are considered trusted sources for readiness *if* they match their expected exercise profile.
+- Legacy rows or test fixtures are excluded from readiness.
+
+==================================================
+READINESS & HISTORICAL COMPARISON
+==================================================
+
+- Readiness looks back 21 days for the same normalized exercise and matched load (+/- 15%).
+- Requires at least 3 matched trusted historical rows (inferred source).
+- Compares current first-rep peak against historical baseline.
+- Historical comparison primarily uses mean velocity.
+- Do not mix up the readiness calculation with historical comparison.
+
+==================================================
+PREFERRED BUG FIX PROCESS
+==================================================
+
+1. Answer the 8 Pre-Flight questions listed at the top of this prompt.
+2. If ambiguities exist, stop and wait for user clarification.
+3. Once clear, implement the smallest, most targeted fix possible based on your plan.
+4. Preserve current source-of-truth boundaries (e.g., CV for squats, IMU for pulldowns).
+5. Update OpenAPI before generated clients (if the bug involves the API contract).
+6. Preserve the Zod compatibility shim.
+7. Add/update deterministic tests to prevent regressions.
+8. Run library typecheck, API typecheck, and mobile typecheck.
+9. Restart affected workflows and verify the preview works as expected.
+10. Report changed files, the root cause discovered, and validation results.
+11. Do not claim completion if the bug can still be reproduced.
+
+==================================================
+REQUESTED BUG FIX
+==================================================
+
+Diagnose and fix the following issue:
+
+[BUG DESCRIPTION: Briefly explain what is going wrong]
+
+[EXPECTED BEHAVIOR: What the app should be doing]
+
+[ACTUAL BEHAVIOR: What the app is currently doing]
+
+[ERROR MESSAGES / LOGS: Paste any specific console errors, red screens, or API failures here]
+
+[STEPS TO REPRODUCE: How to trigger the bug, e.g.,
+1. Open app
+2. Enter exercise X
+3. Tap Calibrate]
+
+The fix should be considered complete only when:
+- The described bug is fully resolved.
+- Rehearsal mode remains isolated.
+- The CV calculation and IMU logic remain safely segregated by exercise.
+- Tests cover the fixed behavior and prevent regression.
+- Typechecks pass and workflows run cleanly.
