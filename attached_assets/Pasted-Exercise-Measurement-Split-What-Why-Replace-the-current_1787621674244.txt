@@ -1,0 +1,49 @@
+Exercise Measurement Split
+What & Why Replace the current one-size-fits-all capture flow with the confirmed exercise-specific architecture: Squats use a profile-view camera and local classical computer vision, while Lat Pulldowns use a securely mounted phone and timestamped accelerometer data. This fixes the misleading barbell-placement instructions for Squats and makes Lat Pulldown analysis depend on the intended IMU signal without regressing diary, recovery, readiness, coaching, or rehearsal isolation.
+Done looks like
+Squat setup never tells the filming person to mount the phone on the barbell.
+Squat setup collects plate or sleeve diameter, defaults to 450 mm, and explains perpendicular profile positioning at hip/knee height.
+Squat calibration and recording provide explicit camera/tracking states, including a visible red tracking box when the target is locked and a clear lost-tracking state.
+Squat recording can be stopped manually, excludes the final racking/noise spike, and does not turn lost frames into zero or extreme velocity values.
+Squat low-confidence results open a post-set review with a scrubbable timeline or graph and editable rep boundaries that recalculate rep metrics.
+Lat Pulldown setup and calibration instruct the user to mount the phone to the weight stack, use the Z-axis, and capture timestamped samples at approximately 20 ms intervals (50 Hz) to ensure accurate velocity integration.
+Lat Pulldown results include detected rep count, per-rep velocity, mean/peak velocity, velocity loss, and comparison with prior persisted sets/history without using video.
+The API contract and persisted provenance distinguish computer-vision Squats from mobile-IMU Lat Pulldowns without trusting rehearsal or legacy rows as measured history.
+The database schema is updated to persist plate_diameter_mm (integer, nullable) and a boolean indicating if manual_rep_bounds_used was triggered.
+Existing diary, recovery, readiness, historical comparison, AI coaching, units, and rehearsal behavior remain available and correctly separated.
+Focused deterministic tests, library typechecks, API typecheck, mobile typecheck, workflow checks, and preview verification pass.
+Out of scope
+Medical or diagnostic interpretation of motion or recovery data.
+Multi-athlete ownership or cryptographically server-attested provenance.
+Replacing the existing PostgreSQL, Drizzle, Express, Expo, OpenAPI, Orval, or React Query architecture.
+Adding a native frame-processor library unless the repository already supports it or the platform-compatible implementation can be done without introducing an incompatible native dependency.
+Redesigning the diary or recovery products.
+Steps
+Audit the existing mobile capture hooks, camera capabilities, API schemas, persistence fields, historical comparison, readiness filtering, and available test fixtures; document the smallest compatibility strategy for the exercise split.
+Implement exercise-specific setup and calibration state: CV Squat camera instructions, 450 mm diameter default, perpendicular profile guidance, and Lat Pulldown rest calibration with approximately 20 ms IMU sampling.
+Implement the CV Squat capture path with local plate/sleeve target tracking, visible red bounding-box feedback, confidence/lost-tracking handling, vertical displacement scaling, repetition detection, and manual Stop behavior that trims the final racking spike. (Note: If utilizing pure JS for frame analysis over the bridge, throttle the processing resolution/framerate to prevent locking the UI thread).
+Implement the Lat Pulldown IMU path with Z-axis baseline subtraction, timestamp-based integration, directional repetition detection, bounded velocity, and per-repetition metrics; do not use the camera for this path.
+Add the post-set CV review state for low-confidence Squat captures. If target tracking is lost for >15% of frames or rep detection fails, flag as low-confidence and present the fallback UI, including timeline/graph markers, manual rep range editing, recalculation, and explicit unavailable states when the data cannot support a result.
+Update the OpenAPI contract before regenerating Zod and React client code, deriving or validating source from the exercise profile as specified while retaining safe isolation for rehearsal and legacy data; preserve the Zod v3 compatibility patch.
+Update API analysis and persistence—including adding plate_diameter_mm and manual_rep_bounds_used to lib/db/src/schema/sets.ts and updating Drizzle schemas accordingly—so CV and IMU results use the correct profile, preserve load-matched historical comparison and trusted readiness behavior, and continue passing the existing diary/recovery/coaching context through unchanged.
+Add deterministic regression coverage for exercise routing, source/provenance handling, CV lost tracking and racking trim, manual rep ranges, IMU sampling/integration, history comparison, and rehearsal exclusion.
+Run code generation, shared-library builds, database/schema verification if needed, API and mobile typechecks, focused tests, managed workflow restarts where required, runtime smoke checks, and mobile preview verification.
+Relevant files
+artifacts/freelocity-mobile/app/index.tsx
+artifacts/freelocity-mobile/src/hooks/useVbtTracker.ts
+artifacts/freelocity-mobile/src/lib/vbtTracker.ts
+artifacts/freelocity-mobile/src/lib/units.ts
+artifacts/freelocity-mobile/app/diary.tsx
+artifacts/api-server/src/routes/coaching.ts
+artifacts/api-server/src/cns-readiness.ts
+artifacts/api-server/src/coaching-insights.ts
+artifacts/api-server/src/diary.ts
+lib/api-spec/openapi.yaml
+lib/api-zod/src/generated/api.ts
+lib/api-client-react/src/generated/api.schemas.ts
+lib/db/src/schema/sets.ts
+artifacts/api-server/scripts/run-readiness-audit-tests.cjs
+artifacts/api-server/scripts/run-coaching-insights-tests.cjs
+artifacts/api-server/scripts/run-diary-context-tests.cjs
+lib/db/scripts/verify-readiness-provenance-schema.cjs
+scripts/post-merge.sh
