@@ -33,7 +33,7 @@ paths:
       operationId: analyzeSet
       tags: [coaching]
       summary: Analyze a set
-      description: Accepts a raw acceleration batch and returns velocity-integrated coaching feedback enriched with VBT profiles, CNS readiness score, and AI coaching text
+      description: Accepts validated on-device CV metrics for Squats or a timestamped acceleration batch for Lat Pulldowns, then returns coaching feedback enriched with VBT profiles and readiness
       requestBody:
         required: true
         content:
@@ -293,8 +293,9 @@ components:
           description: Load on the bar in kilograms
         measurement_source:
           type: string
-          enum: [mobile_imu, test_fixture]
-          description: Provenance declaration for the batch; only mobile_imu rows can contribute to readiness
+          enum: [computer_vision, mobile_imu, test_fixture]
+          nullable: true
+          description: Optional legacy/test provenance override. Production source is inferred from the exercise profile.
         display_unit:
           type: string
           enum: [imperial, metric]
@@ -311,21 +312,68 @@ components:
           description: Total sets planned in the workout
         samples:
           type: array
+          nullable: true
           description: Ordered raw acceleration samples captured during the set
           items:
             $ref: "#/components/schemas/AccelerationSample"
         phone_placement:
           type: string
-          enum: [weight_stack, barbell, pocket]
+          enum: [weight_stack, pocket]
           default: weight_stack
-          description: "How the phone is mounted during the set. Affects which axis is used for velocity integration and how the AI coaching interprets the data."
+          description: "Lat Pulldown phone placement. The weight stack path uses the Z axis."
+        plate_diameter_mm:
+          type: integer
+          nullable: true
+          minimum: 100
+          maximum: 1000
+          default: 450
+          description: Squat plate or sleeve diameter used to scale camera pixels to meters
+        mean_velocity_ms:
+          type: number
+          nullable: true
+          minimum: 0
+          description: Pre-calculated on-device Squat mean velocity
+        peak_velocity_ms:
+          type: number
+          nullable: true
+          minimum: 0
+          description: Pre-calculated on-device Squat peak velocity
+        first_rep_peak_ms:
+          type: number
+          nullable: true
+          minimum: 0
+          description: Pre-calculated first-repetition peak velocity
+        rep_peaks_ms:
+          type: array
+          nullable: true
+          items:
+            type: number
+            minimum: 0
+          description: Pre-calculated Squat per-repetition peak velocities
+        actual_reps:
+          type: integer
+          nullable: true
+          minimum: 1
+          description: Pre-calculated Squat repetition count
+        duration_s:
+          type: number
+          nullable: true
+          minimum: 0
+          description: Pre-calculated Squat set duration
+        sample_count:
+          type: integer
+          nullable: true
+          minimum: 1
+          description: Number of CV frames used for the pre-calculated metrics
+        manual_rep_bounds_used:
+          type: boolean
+          default: false
+          description: Whether the athlete manually corrected Squat repetition bounds
       required:
         - exercise_name
         - weight_kg
         - target_reps
         - total_sets
-        - samples
-        - measurement_source
     SetAnalysisResult:
       type: object
       properties:
@@ -339,8 +387,8 @@ components:
           description: Canonical current-set load used to select the ±15% load-match band
         measurement_source:
           type: string
-          enum: [mobile_imu, test_fixture]
-          description: Declared current-set batch provenance; test_fixture rows are retained but excluded from readiness
+          enum: [computer_vision, mobile_imu, test_fixture]
+          description: Measurement source inferred from the exercise profile
         mean_velocity_ms:
           type: number
           description: Mean bar velocity in m/s integrated from the acceleration batch
@@ -368,6 +416,13 @@ components:
         sample_count:
           type: integer
           description: Number of samples processed
+        plate_diameter_mm:
+          type: integer
+          nullable: true
+          description: Squat plate or sleeve diameter used for camera scaling
+        manual_rep_bounds_used:
+          type: boolean
+          description: Whether Squat rep bounds were manually corrected
         duration_s:
           type: number
           description: Total set duration in seconds
@@ -447,6 +502,8 @@ components:
         - velocity_loss_pct
         - fatigue_level
         - sample_count
+        - plate_diameter_mm
+        - manual_rep_bounds_used
         - duration_s
         - ai_feedback
         - sparkden_history_used

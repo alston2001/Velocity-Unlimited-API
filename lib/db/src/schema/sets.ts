@@ -27,6 +27,8 @@ export const setsTable = pgTable(
     // Exercise context
     exerciseName: text("exercise_name").notNull(),
     weightKg: real("weight_kg").notNull(),
+     plateDiameterMm: integer("plate_diameter_mm"),
+     manualRepBoundsUsed: integer("manual_rep_bounds_used").notNull().default(0),
     // Only mobile_imu rows are eligible for readiness baselines. Legacy rows
     // remain queryable but are intentionally unclassified after migration.
     measurementSource: text("measurement_source").notNull().default("legacy_unclassified"),

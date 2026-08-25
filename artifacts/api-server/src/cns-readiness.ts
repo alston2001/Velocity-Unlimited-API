@@ -93,6 +93,18 @@ const TREND_SESSIONS = 5;
 /** Session-to-session slope threshold to call a trend Rising or Declining (%). */
 const TREND_THRESHOLD_PCT = 3;
 export const TRUSTED_MEASUREMENT_SOURCE = "mobile_imu";
+export const TRUSTED_CV_SOURCE = "computer_vision";
+
+export function expectedMeasurementSource(exerciseName: string): string {
+  return canonicalizeExerciseName(exerciseName) === "squat"
+    ? TRUSTED_CV_SOURCE
+    : TRUSTED_MEASUREMENT_SOURCE;
+}
+
+export function isTrustedMeasurementRow(row: Pick<HistoricalSetRow, "measurementSource" | "date"> & { exerciseName?: string }): boolean {
+  if (row.measurementSource === TRUSTED_CV_SOURCE) return true;
+  return row.measurementSource === TRUSTED_MEASUREMENT_SOURCE;
+}
 
 /**
  * Test fixtures, imports, and legacy rows can be retained for auditability,
@@ -101,9 +113,7 @@ export const TRUSTED_MEASUREMENT_SOURCE = "mobile_imu";
 export function filterTrustedReadinessHistory(
   history: HistoricalSetRow[],
 ): HistoricalSetRow[] {
-  return history.filter(
-    (row) => row.measurementSource === TRUSTED_MEASUREMENT_SOURCE,
-  );
+  return history.filter((row) => isTrustedMeasurementRow(row));
 }
 
 // ---------------------------------------------------------------------------
@@ -158,9 +168,9 @@ async function fetchHistory(
       and(
         sql`lower(trim(${setsTable.exerciseName})) = ${canonicalizeExerciseName(exerciseName)}`,
         gte(setsTable.createdAt, since),
-        eq(setsTable.measurementSource, TRUSTED_MEASUREMENT_SOURCE),
       ),
     )
+    .filter((row) => isTrustedMeasurementRow(row))
     .orderBy(desc(setsTable.createdAt));
 
   return rows

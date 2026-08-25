@@ -6,7 +6,7 @@ import {
   type DiaryContext,
   type DiarySentiment,
 } from "./diary-context.js";
-import { TRUSTED_MEASUREMENT_SOURCE } from "./cns-readiness.js";
+import { expectedMeasurementSource } from "./cns-readiness.js";
 
 export type DiaryAnalysisStatus = "analyzed" | "unavailable";
 
@@ -111,17 +111,16 @@ export async function getDiaryTrend(days: number) {
     )
     .orderBy(asc(diaryEntriesTable.entryDate));
   const sets = await db
-    .select({ createdAt: setsTable.createdAt, meanVelocityMs: setsTable.meanVelocityMs })
+    .select({ createdAt: setsTable.createdAt, meanVelocityMs: setsTable.meanVelocityMs, exerciseName: setsTable.exerciseName, measurementSource: setsTable.measurementSource })
     .from(setsTable)
     .where(
       and(
         gte(setsTable.createdAt, start),
-        eq(setsTable.measurementSource, TRUSTED_MEASUREMENT_SOURCE),
       ),
     );
 
   const velocityByDay = new Map<string, number[]>();
-  for (const set of sets) {
+  for (const set of sets.filter((row) => row.measurementSource === expectedMeasurementSource(row.exerciseName))) {
     const key = dateKey(set.createdAt);
     velocityByDay.set(key, [...(velocityByDay.get(key) ?? []), set.meanVelocityMs]);
   }
