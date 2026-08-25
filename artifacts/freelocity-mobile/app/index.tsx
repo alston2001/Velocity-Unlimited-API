@@ -2,6 +2,7 @@ import { Accelerometer } from 'expo-sensors';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useKeepAwake } from 'expo-keep-awake';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import jpeg from 'jpeg-js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -12,7 +13,6 @@ import {
   Text,
   TextInput,
   View,
-  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -130,25 +130,39 @@ export default function MotionTrackerScreen() {
     return () => subscription.remove();
   }, [demoMode, isSquat, phase, tracker.updateImu]);
 
-  const processWebSnapshot = useCallback(async (base64: string, timestamp: number) => {
-    if (Platform.OS !== 'web' || typeof document === 'undefined') return false;
-    const image = document.createElement('img');
-    image.src = `data:image/jpeg;base64,${base64}`;
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error('The camera snapshot could not be decoded.'));
-    });
+  const processCameraSnapshot = useCallback((base64: string, timestamp: number) => {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const cleanBase64 = base64.replace(/[^A-Za-z0-9+/=]/g, '');
+    const byteLength = Math.floor(cleanBase64.length * 3 / 4) - (cleanBase64.endsWith('==') ? 2 : cleanBase64.endsWith('=') ? 1 : 0);
+    const bytes = new Uint8Array(byteLength);
+    let outputIndex = 0;
+    for (let index = 0; index < cleanBase64.length; index += 4) {
+      const a = alphabet.indexOf(cleanBase64[index]!);
+      const b = alphabet.indexOf(cleanBase64[index + 1]!);
+      const c = alphabet.indexOf(cleanBase64[index + 2]!);
+      const d = alphabet.indexOf(cleanBase64[index + 3]!);
+      bytes[outputIndex++] = (a << 2) | (b >> 4);
+      if (outputIndex < byteLength) bytes[outputIndex++] = ((b & 15) << 4) | (c >> 2);
+      if (outputIndex < byteLength) bytes[outputIndex++] = ((c & 3) << 6) | d;
+    }
+    const decoded = jpeg.decode(bytes, { useTArray: true, formatAsRGBA: true });
     const maxDimension = 320;
-    const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
-    const width = Math.max(8, Math.round(image.naturalWidth * scale));
-    const height = Math.max(8, Math.round(image.naturalHeight * scale));
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext('2d', { willReadFrequently: true });
-    if (!context) throw new Error('The browser does not expose canvas pixels for CV tracking.');
-    context.drawImage(image, 0, 0, width, height);
-    const rgba = new Uint8ClampedArray(context.getImageData(0, 0, width, height).data);
+    const scale = Math.min(1, maxDimension / Math.max(decoded.width, decoded.height));
+    const width = Math.max(8, Math.round(decoded.width * scale));
+    const height = Math.max(8, Math.round(decoded.height * scale));
+    const rgba = new Uint8ClampedArray(width * height * 4);
+    for (let y = 0; y < height; y++) {
+      const sourceY = Math.min(decoded.height - 1, Math.floor(y / scale));
+      for (let x = 0; x < width; x++) {
+        const sourceX = Math.min(decoded.width - 1, Math.floor(x / scale));
+        const sourceOffset = (sourceY * decoded.width + sourceX) * 4;
+        const targetOffset = (y * width + x) * 4;
+        rgba[targetOffset] = decoded.data[sourceOffset] ?? 0;
+        rgba[targetOffset + 1] = decoded.data[sourceOffset + 1] ?? 0;
+        rgba[targetOffset + 2] = decoded.data[sourceOffset + 2] ?? 0;
+        rgba[targetOffset + 3] = decoded.data[sourceOffset + 3] ?? 255;
+      }
+    }
     const deltaSeconds = lastCvFrameAt.current == null ? CV_SNAPSHOT_INTERVAL_MS / 1000 : Math.max(0.03, (timestamp - lastCvFrameAt.current) / 1000);
     lastCvFrameAt.current = timestamp;
     const snapshot = tracker.processFrame(rgba, width, height, deltaSeconds);
@@ -158,21 +172,18 @@ export default function MotionTrackerScreen() {
       tracked: snapshot.centroid !== null,
     });
     setTrackingLost(snapshot.centroid === null);
-    return true;
+    return snapshot;
   }, [tracker.processFrame]);
 
   useEffect(() => {
     if (phase !== 'RECORD' || !isSquat) return;
-    if (Platform.OS !== 'web') {
-      setTrackingLost(true);
-      return;
-    }
     const captureSnapshot = async () => {
       if (cvCaptureBusy.current || !cameraRef.current) return;
       cvCaptureBusy.current = true;
       try {
         const picture = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.1, skipProcessing: true });
-        if (picture.base64) await processWebSnapshot(picture.base64, Date.now());
+        if (picture.base64) processCameraSnapshot(picture.base64, Date.now());
+        else setTrackingLost(true);
       } catch {
         setTrackingLost(true);
       } finally {
@@ -182,7 +193,7 @@ export default function MotionTrackerScreen() {
     void captureSnapshot();
     const interval = setInterval(() => { void captureSnapshot(); }, CV_SNAPSHOT_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [isSquat, phase, processWebSnapshot]);
+  }, [isSquat, phase, processCameraSnapshot]);
 
   const changeUnit = useCallback((next: UnitSystem) => {
     const parsed = Number(weight);
@@ -368,7 +379,7 @@ export default function MotionTrackerScreen() {
     {error ? <Text style={styles.warning}>{error}</Text> : null}<Button label={demoMode ? 'START REHEARSAL' : isSquat ? 'CALIBRATE SQUAT CAMERA' : 'CALIBRATE LAT PULLDOWN IMU'} onPress={() => { void begin(); }} />
   </ScrollView>;
 
-  return <View style={styles.root}>{isSquat ? <CameraView ref={cameraRef} facing="back" style={StyleSheet.absoluteFillObject} onCameraReady={() => setCameraReady(true)} /> : null}<View style={styles.shade} /><View style={[styles.record, { paddingTop: insets.top + 20 }]}><Text style={styles.eyebrow}>{isSquat ? trackingLost ? 'CV TRACKING LOST' : 'SQUAT CV · PROFILE VIEW' : 'LAT PULLDOWN IMU · Z AXIS'}</Text><Text style={styles.title}>{exerciseName} set in progress</Text>{isSquat ? <View style={[styles.trackingBox, trackingLost && styles.trackingBoxLost]} /> : null}<View style={styles.liveCard}><Metric label="REPS DETECTED" value={String(tracker.reps.length)} /><Metric label="VELOCITY" value={tracker.currentVelocity == null ? 'Awaiting data' : `${tracker.currentVelocity.toFixed(2)} m/s`} note={isSquat ? Platform.OS === 'web' ? 'local CV estimate · 5 Hz snapshots' : 'withheld: native frame decode unavailable' : 'Z-axis IMU estimate'} /><Text style={styles.body}>{isSquat ? Platform.OS !== 'web' ? 'This build cannot decode camera frames locally, so Squat velocity will be withheld. Use the web build for the supported CV snapshot path; no values are estimated.' : trackingLost ? 'Tracking paused. Lost frames are excluded; restore the plate to the guide before continuing.' : 'Keep the plate inside the red guide. Tap Stop before racking the bar.' : 'Phone stays secured on the stack. Direction changes determine repetitions; no video is recorded.'}</Text></View><View style={styles.recordActions}>{isSquat ? <Button label={trackingLost ? 'RESUME TRACKING' : 'MARK TRACKING LOST'} secondary onPress={() => setTrackingLost((lost) => !lost)} /> : null}<Button label="STOP & REVIEW" onPress={stopRecording} /></View><Text style={styles.caption}>{isSquat ? 'Manual Stop trims final racking noise. Low-confidence captures open post-set review.' : 'At least 20 timestamped samples are required. Do not move the phone off the stack.'}</Text></View></View>;
+  return <View style={styles.root}>{isSquat ? <CameraView ref={cameraRef} facing="back" style={StyleSheet.absoluteFillObject} onCameraReady={() => setCameraReady(true)} /> : null}<View style={styles.shade} /><View style={[styles.record, { paddingTop: insets.top + 20 }]}><Text style={styles.eyebrow}>{isSquat ? trackingLost ? 'CV TRACKING LOST' : 'SQUAT CV · PROFILE VIEW' : 'LAT PULLDOWN IMU · Z AXIS'}</Text><Text style={styles.title}>{exerciseName} set in progress</Text>{isSquat ? <View style={[styles.trackingBox, trackingLost && styles.trackingBoxLost]} /> : null}<View style={styles.liveCard}><Metric label="REPS DETECTED" value={String(tracker.reps.length)} /><Metric label="VELOCITY" value={tracker.currentVelocity == null ? 'Awaiting data' : `${tracker.currentVelocity.toFixed(2)} m/s`} note={isSquat ? 'local CV estimate · 5 Hz snapshots' : 'Z-axis IMU estimate'} /><Text style={styles.body}>{isSquat ? trackingLost ? 'Tracking paused. Lost frames are excluded; restore the plate to the guide before continuing.' : 'Keep the plate inside the red guide. Tap Stop before racking the bar.' : 'Phone stays secured on the stack. Direction changes determine repetitions; no video is recorded.'}</Text></View><View style={styles.recordActions}>{isSquat ? <Button label={trackingLost ? 'RESUME TRACKING' : 'MARK TRACKING LOST'} secondary onPress={() => setTrackingLost((lost) => !lost)} /> : null}<Button label="STOP & REVIEW" onPress={stopRecording} /></View><Text style={styles.caption}>{isSquat ? 'Manual Stop trims final racking noise. Low-confidence captures open post-set review.' : 'At least 20 timestamped samples are required. Do not move the phone off the stack.'}</Text></View></View>;
 }
 
 const styles = StyleSheet.create({
