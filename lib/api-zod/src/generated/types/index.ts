@@ -25,6 +25,7 @@ export * from './setAnalysisRequestDisplayUnit';
 export * from './setAnalysisRequestMeasurementSource';
 export * from './setAnalysisRequestPhonePlacement';
 export * from './setAnalysisResult';
+export * from './setAnalysisResultDeterministicStatus';
 export * from './setAnalysisResultMeasurementSource';
 export * from './setAnalysisResultReadinessDataSource';
 export * from './setAnalysisResultStatus';

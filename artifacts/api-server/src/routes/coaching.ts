@@ -23,6 +23,7 @@ import {
 import {
   buildDeterministicCoaching,
   buildHistoricalComparison,
+  selectDeterministicStatus,
   type HistoricalComparison,
 } from "../coaching-insights.js";
 import { getDiaryContext } from "../diary.js";
@@ -233,19 +234,28 @@ ${diarySection}
 Provide specific, actionable coaching feedback for the next set. Reference the velocity numbers directly. If readiness is Low or Compromised, factor that into load/intensity recommendations.`;
 
   const fallback = buildDeterministicCoaching(ctx);
+  const timeoutMs = 3500;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-5.6-luna",
-      max_completion_tokens: 8192,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-    });
+    const response = await Promise.race([
+      openai.chat.completions.create({
+        model: "gpt-5.6-luna",
+        max_completion_tokens: 8192,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      }),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(`AI feedback timed out after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
     return response.choices[0]?.message?.content?.trim() || fallback;
   } catch (error) {
     console.warn("[coaching] AI generation unavailable; returning deterministic evidence-grounded feedback", error);
     return fallback;
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 }
 
@@ -325,6 +335,7 @@ router.post("/analyze-set", async (req, res) => {
     target_reps,
     total_sets,
     measurement_source,
+    capture_id,
   } = parsed.data;
   const exerciseName = exercise_name.trim().replace(/\s+/g, " ");
   const exerciseIdentity = canonicalizeExerciseName(exerciseName);
@@ -493,6 +504,15 @@ router.post("/analyze-set", async (req, res) => {
   } catch (error) {
     req.log.warn({ error }, "Diary context was unavailable for coaching");
   }
+  const deterministicStatus = selectDeterministicStatus({
+    historicalComparison,
+    velocityLossPct,
+    fatigueLevel,
+    cnsReadinessScore: readinessResult.score,
+    motorReadinessLevel: readinessResult.level,
+    baselineVelocityMs: readinessResult.baselineVelocityMs,
+    diaryContext,
+  });
 
   // 5. AI coaching text (includes CNS readiness context)
   const aiFeedback = await generateCoachingFeedback({
@@ -546,7 +566,8 @@ router.post("/analyze-set", async (req, res) => {
       fatigueLevel,
       durationS: Math.round(durationS * 10) / 10,
       sampleCount,
-    });
+      captureId: capture_id ?? null,
+    }).onConflictDoNothing({ target: setsTable.captureId });
   } catch (err) {
     // Persistence failure must not block the response — log and continue
     console.error("[sets] Failed to persist set:", err);
@@ -595,6 +616,7 @@ router.post("/analyze-set", async (req, res) => {
     })),
     diary_context_available: diaryContext !== null,
     diary_context: diaryContext,
+    deterministic_status: deterministicStatus,
   });
 });
 

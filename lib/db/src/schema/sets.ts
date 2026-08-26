@@ -23,6 +23,7 @@ export const setsTable = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
+    captureId: text("capture_id").unique(),
 
     // Exercise context
     exerciseName: text("exercise_name").notNull(),

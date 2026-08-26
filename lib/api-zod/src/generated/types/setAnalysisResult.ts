@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { ReadinessEvidence } from './readinessEvidence';
+import type { SetAnalysisResultDeterministicStatus } from './setAnalysisResultDeterministicStatus';
 import type { SetAnalysisResultMeasurementSource } from './setAnalysisResultMeasurementSource';
 import type { SetAnalysisResultReadinessDataSource } from './setAnalysisResultReadinessDataSource';
 import type { SetAnalysisResultStatus } from './setAnalysisResultStatus';
@@ -73,4 +74,6 @@ export interface SetAnalysisResult {
   diary_context_available: boolean;
   /** Non-clinical sentiment context only; does not contain the raw diary note */
   diary_context: string | null;
+  /** Data-selected coaching status available before optional AI enrichment */
+  deterministic_status: SetAnalysisResultDeterministicStatus;
 }

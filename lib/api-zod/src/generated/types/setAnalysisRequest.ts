@@ -19,6 +19,12 @@ export interface SetAnalysisRequest {
      * @minLength 1
      */
   exercise_name: string;
+  /**
+     * Stable client-generated ID for safe retry and exactly-once set persistence
+     * @minLength 8
+     * @maxLength 128
+     */
+  capture_id?: string;
   /** Load on the bar in kilograms */
   weight_kg: number;
   /** Optional legacy/test provenance override. Production source is inferred from the exercise profile. */

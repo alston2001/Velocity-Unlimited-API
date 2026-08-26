@@ -19,7 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { analyzeSet, type SetAnalysisResult } from '@workspace/api-client-react';
 import { useConcussionTracker } from '@/src/hooks/useConcussionTracker';
 import { useVbtTracker } from '@/src/hooks/useVbtTracker';
-import { DEFAULT_PLATE_DIAMETER_MM, deriveCvRepMetrics, measurementModeForExercise, needsManualCvReview, trimRackingNoise, type CvFramePoint, type CvRepBounds } from '@/src/lib/exerciseMeasurement';
+import { DEFAULT_PLATE_DIAMETER_MM, deriveCvRepMetrics, getCvTrackingConfidence, measurementModeForExercise, needsManualCvReview, trimRackingNoise, type CvFramePoint, type CvRepBounds } from '@/src/lib/exerciseMeasurement';
 import { formatMassFromKg, fromCanonicalKg, getUnitConfig, toCanonicalKg, type UnitSystem } from '@/src/lib/units';
 import type { SetSummary } from '@/src/lib/vbtTracker';
 
@@ -29,6 +29,48 @@ const UNIT_STORAGE_KEY = 'freelocity.unit-system';
 const REST_CALIBRATION_MS = 1000;
 const IMU_INTERVAL_MS = 20;
 const CV_SNAPSHOT_INTERVAL_MS = 200;
+
+type DecodedCameraFrame = {
+  rgba: Uint8ClampedArray;
+  width: number;
+  height: number;
+};
+
+function decodeCameraFrame(base64: string): DecodedCameraFrame {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const cleanBase64 = base64.replace(/[^A-Za-z0-9+/=]/g, '');
+  const byteLength = Math.floor(cleanBase64.length * 3 / 4) - (cleanBase64.endsWith('==') ? 2 : cleanBase64.endsWith('=') ? 1 : 0);
+  const bytes = new Uint8Array(byteLength);
+  let outputIndex = 0;
+  for (let index = 0; index < cleanBase64.length; index += 4) {
+    const a = alphabet.indexOf(cleanBase64[index]!);
+    const b = alphabet.indexOf(cleanBase64[index + 1]!);
+    const c = alphabet.indexOf(cleanBase64[index + 2]!);
+    const d = alphabet.indexOf(cleanBase64[index + 3]!);
+    bytes[outputIndex++] = (a << 2) | (b >> 4);
+    if (outputIndex < byteLength) bytes[outputIndex++] = ((b & 15) << 4) | (c >> 2);
+    if (outputIndex < byteLength) bytes[outputIndex++] = ((c & 3) << 6) | d;
+  }
+  const decoded = jpeg.decode(bytes, { useTArray: true, formatAsRGBA: true });
+  const maxDimension = 320;
+  const scale = Math.min(1, maxDimension / Math.max(decoded.width, decoded.height));
+  const width = Math.max(8, Math.round(decoded.width * scale));
+  const height = Math.max(8, Math.round(decoded.height * scale));
+  const rgba = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y++) {
+    const sourceY = Math.min(decoded.height - 1, Math.floor(y / scale));
+    for (let x = 0; x < width; x++) {
+      const sourceX = Math.min(decoded.width - 1, Math.floor(x / scale));
+      const sourceOffset = (sourceY * decoded.width + sourceX) * 4;
+      const targetOffset = (y * width + x) * 4;
+      rgba[targetOffset] = decoded.data[sourceOffset] ?? 0;
+      rgba[targetOffset + 1] = decoded.data[sourceOffset + 1] ?? 0;
+      rgba[targetOffset + 2] = decoded.data[sourceOffset + 2] ?? 0;
+      rgba[targetOffset + 3] = decoded.data[sourceOffset + 3] ?? 255;
+    }
+  }
+  return { rgba, width, height };
+}
 
 function Button({ label, onPress, disabled = false, secondary = false }: { label: string; onPress: () => void; disabled?: boolean; secondary?: boolean }) {
   return <Pressable testID={`button-${label.toLowerCase().replace(/\W+/g, '-')}`} disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.button, secondary && styles.buttonSecondary, { opacity: disabled ? 0.4 : pressed ? 0.75 : 1 }]}><Text style={[styles.buttonText, secondary && styles.buttonSecondaryText]}>{label}</Text></Pressable>;
@@ -59,6 +101,7 @@ function Feedback({ exerciseName, unitSystem, weightKg, summary, result, error, 
 }) {
   const measured = summary.measurementStatus === 'MEASURED';
   const source = measurementModeForExercise(exerciseName) === 'SQUAT_CV' ? 'COMPUTER VISION' : 'WEIGHT-STACK IMU';
+  const serverOwnsRepTable = source === 'WEIGHT-STACK IMU' && result !== null;
   return <ScrollView contentContainerStyle={styles.page}>
     <Text style={styles.eyebrow}>SET FEEDBACK · {exerciseName.toUpperCase()}</Text><Text style={styles.title}>What changed today</Text>
     <View style={styles.source}><Text style={styles.sourceText}>{measured ? `${source} · MEASURED` : 'VELOCITY WITHHELD'}</Text><Text style={styles.body}>{measured ? `${source} velocity was calculated from this set's local measurement data.` : summary.unavailableReason ?? error ?? 'This capture did not produce a supportable velocity measurement.'}</Text></View>
@@ -70,10 +113,10 @@ function Feedback({ exerciseName, unitSystem, weightKg, summary, result, error, 
       <Metric label="VELOCITY LOSS" value={result?.velocity_loss_pct == null ? '—' : `${result.velocity_loss_pct.toFixed(1)}%`} />
       <Metric label="QUALITY" value={measured ? 'MEASURED' : 'WITHHELD'} note={measured ? `${result?.sample_count ?? summary.sampleCount ?? 0} samples` : 'no readiness or coaching'} />
     </View>
-    <View style={styles.card}><Text style={styles.cardTitle}>Rep-by-rep velocity</Text>{summary.reps.length ? summary.reps.map((rep) => <View style={styles.repRow} key={rep.repNumber}><Text style={styles.repName}>REP {rep.repNumber}</Text><Text style={styles.repMetric}>{rep.repTimeSec.toFixed(2)} s</Text><Text style={styles.repMetric}>{rep.meanVelocity?.toFixed(3) ?? '—'} m/s mean</Text><Text style={styles.repMetric}>{rep.peakVelocity?.toFixed(3) ?? '—'} m/s peak</Text></View>) : <Text style={styles.body}>No complete, reliable repetitions were available.</Text>}</View>
+    <View style={styles.card}><Text style={styles.cardTitle}>Rep-by-rep velocity</Text>{serverOwnsRepTable ? result.rep_peaks_ms.map((peak, index) => <View style={styles.repRow} key={index}><Text style={styles.repName}>REP {index + 1}</Text><Text style={styles.repMetric}>Server-validated IMU peak</Text><Text style={styles.repMetric}>{peak.toFixed(3)} m/s peak</Text></View>) : summary.reps.length ? summary.reps.map((rep) => <View style={styles.repRow} key={rep.repNumber}><Text style={styles.repName}>REP {rep.repNumber}</Text><Text style={styles.repMetric}>{rep.repTimeSec.toFixed(2)} s</Text><Text style={styles.repMetric}>{rep.meanVelocity?.toFixed(3) ?? '—'} m/s mean</Text><Text style={styles.repMetric}>{rep.peakVelocity?.toFixed(3) ?? '—'} m/s peak</Text></View>) : <Text style={styles.body}>No complete, reliable repetitions were available.</Text>}</View>
     <View style={styles.card}><Text style={styles.cardTitle}>Readiness · load matched</Text><Text style={styles.readiness}>{result?.cns_readiness_score == null ? 'Building baseline' : `${result.cns_readiness_score}/100`}</Text><Text style={styles.body}>{result?.motor_readiness_level ?? 'Unavailable without a valid measured set'} · {result?.velocity_trend ?? 'Insufficient data'}</Text></View>
     <View style={styles.card}><Text style={styles.cardTitle}>Historical profile</Text><Text style={styles.body}>{result?.historical_comparison ?? 'Historical comparison is available after a valid measured set is saved.'}</Text></View>
-    <View style={styles.card}><Text style={styles.cardTitle}>AI coach · evidence grounded</Text><Text style={styles.body}>{result?.ai_feedback ?? error ?? 'Coaching was withheld because this capture was not a valid measurement.'}</Text><Text style={styles.caption}>Performance guidance only. It does not diagnose injury, fatigue, or recovery status.</Text></View>
+    <View style={styles.card}><Text style={styles.cardTitle}>AI coach · evidence grounded</Text>{result?.deterministic_status ? <Text style={styles.success}>DATA STATUS · {result.deterministic_status.replaceAll('_', ' ')}</Text> : null}<Text style={styles.body}>{result?.ai_feedback ?? error ?? 'Coaching was withheld because this capture was not a valid measurement.'}</Text><Text style={styles.caption}>Performance guidance only. It does not diagnose injury, fatigue, or recovery status.</Text></View>
     <Button label="START SEPARATE RECOVERY CHECK-IN" secondary onPress={onRecovery} /><Button label="START ANOTHER SET" onPress={onRestart} />
   </ScrollView>;
 }
@@ -92,6 +135,7 @@ export default function MotionTrackerScreen() {
   const [calibration, setCalibration] = useState<CalibrationState>('IDLE');
   const [cameraReady, setCameraReady] = useState(false);
   const [trackingLost, setTrackingLost] = useState(false);
+  const [calibrationDetail, setCalibrationDetail] = useState<string | null>(null);
   const [manualBounds, setManualBounds] = useState<CvRepBounds[]>([]);
   const [summary, setSummary] = useState<SetSummary>({ reps: [], meanRepTime: 0, topSpeed: 0, peakVelocities: [], consistencyScore: 0 });
   const [result, setResult] = useState<SetAnalysisResult | null>(null);
@@ -103,8 +147,11 @@ export default function MotionTrackerScreen() {
   const cvCaptureBusy = useRef(false);
   const lastCvFrameAt = useRef<number | null>(null);
   const calibrationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const calibrationSubscription = useRef<{ remove: () => void } | null>(null);
   const startedAt = useRef(0);
   const finalized = useRef(false);
+  const recordingSessionId = useRef(0);
+  const captureId = useRef<string | null>(null);
   useKeepAwake();
 
   const mode = measurementModeForExercise(exerciseName);
@@ -117,7 +164,10 @@ export default function MotionTrackerScreen() {
 
   useEffect(() => { AsyncStorage.getItem(UNIT_STORAGE_KEY).then((value) => { if (value === 'imperial' || value === 'metric') setUnitSystem(value); }).catch(() => undefined); }, []);
   useEffect(() => { AsyncStorage.setItem(UNIT_STORAGE_KEY, unitSystem).catch(() => undefined); }, [unitSystem]);
-  useEffect(() => () => { if (calibrationTimer.current) clearTimeout(calibrationTimer.current); }, []);
+  useEffect(() => () => {
+    if (calibrationTimer.current) clearTimeout(calibrationTimer.current);
+    calibrationSubscription.current?.remove();
+  }, []);
 
   useEffect(() => {
     if (phase !== 'RECORD' || isSquat || demoMode) return;
@@ -130,39 +180,9 @@ export default function MotionTrackerScreen() {
     return () => subscription.remove();
   }, [demoMode, isSquat, phase, tracker.updateImu]);
 
-  const processCameraSnapshot = useCallback((base64: string, timestamp: number) => {
-    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-    const cleanBase64 = base64.replace(/[^A-Za-z0-9+/=]/g, '');
-    const byteLength = Math.floor(cleanBase64.length * 3 / 4) - (cleanBase64.endsWith('==') ? 2 : cleanBase64.endsWith('=') ? 1 : 0);
-    const bytes = new Uint8Array(byteLength);
-    let outputIndex = 0;
-    for (let index = 0; index < cleanBase64.length; index += 4) {
-      const a = alphabet.indexOf(cleanBase64[index]!);
-      const b = alphabet.indexOf(cleanBase64[index + 1]!);
-      const c = alphabet.indexOf(cleanBase64[index + 2]!);
-      const d = alphabet.indexOf(cleanBase64[index + 3]!);
-      bytes[outputIndex++] = (a << 2) | (b >> 4);
-      if (outputIndex < byteLength) bytes[outputIndex++] = ((b & 15) << 4) | (c >> 2);
-      if (outputIndex < byteLength) bytes[outputIndex++] = ((c & 3) << 6) | d;
-    }
-    const decoded = jpeg.decode(bytes, { useTArray: true, formatAsRGBA: true });
-    const maxDimension = 320;
-    const scale = Math.min(1, maxDimension / Math.max(decoded.width, decoded.height));
-    const width = Math.max(8, Math.round(decoded.width * scale));
-    const height = Math.max(8, Math.round(decoded.height * scale));
-    const rgba = new Uint8ClampedArray(width * height * 4);
-    for (let y = 0; y < height; y++) {
-      const sourceY = Math.min(decoded.height - 1, Math.floor(y / scale));
-      for (let x = 0; x < width; x++) {
-        const sourceX = Math.min(decoded.width - 1, Math.floor(x / scale));
-        const sourceOffset = (sourceY * decoded.width + sourceX) * 4;
-        const targetOffset = (y * width + x) * 4;
-        rgba[targetOffset] = decoded.data[sourceOffset] ?? 0;
-        rgba[targetOffset + 1] = decoded.data[sourceOffset + 1] ?? 0;
-        rgba[targetOffset + 2] = decoded.data[sourceOffset + 2] ?? 0;
-        rgba[targetOffset + 3] = decoded.data[sourceOffset + 3] ?? 255;
-      }
-    }
+  const processCameraSnapshot = useCallback((base64: string, timestamp: number, sessionId: number) => {
+    if (sessionId !== recordingSessionId.current || phase !== 'RECORD') return null;
+    const { rgba, width, height } = decodeCameraFrame(base64);
     const deltaSeconds = lastCvFrameAt.current == null ? CV_SNAPSHOT_INTERVAL_MS / 1000 : Math.max(0.03, (timestamp - lastCvFrameAt.current) / 1000);
     lastCvFrameAt.current = timestamp;
     const snapshot = tracker.processFrame(rgba, width, height, deltaSeconds);
@@ -170,19 +190,21 @@ export default function MotionTrackerScreen() {
       timestamp,
       displacementM: snapshot.displacement,
       tracked: snapshot.centroid !== null,
+      confidence: snapshot.trackingConfidence,
     });
     setTrackingLost(snapshot.centroid === null);
     return snapshot;
-  }, [tracker.processFrame]);
+  }, [phase, tracker.processFrame]);
 
   useEffect(() => {
     if (phase !== 'RECORD' || !isSquat) return;
+    const sessionId = recordingSessionId.current;
     const captureSnapshot = async () => {
       if (cvCaptureBusy.current || !cameraRef.current) return;
       cvCaptureBusy.current = true;
       try {
         const picture = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.1, skipProcessing: true });
-        if (picture.base64) processCameraSnapshot(picture.base64, Date.now());
+        if (picture.base64) setTrackingLost(processCameraSnapshot(picture.base64, Date.now(), sessionId) === null);
         else setTrackingLost(true);
       } catch {
         setTrackingLost(true);
@@ -203,14 +225,53 @@ export default function MotionTrackerScreen() {
 
   const calibrateImu = useCallback(() => {
     setCalibration('CAPTURING');
+    setCalibrationDetail(null);
     const rest: number[] = [];
     Accelerometer.setUpdateInterval(IMU_INTERVAL_MS);
+    calibrationSubscription.current?.remove();
     const sub = Accelerometer.addListener((data) => rest.push(data.z * 9.81));
+    calibrationSubscription.current = sub;
     calibrationTimer.current = setTimeout(() => {
       sub.remove();
-      setCalibration(tracker.calibrateImu(rest) ? 'READY' : 'FAILED');
+      calibrationSubscription.current = null;
+      const calibrated = tracker.calibrateImu(rest);
+      setCalibration(calibrated ? 'READY' : 'FAILED');
+      setCalibrationDetail(
+        calibrated
+          ? `Sensor confidence ${Math.round(tracker.calibrationConfidence * 100)}%.`
+          : 'The stack moved or the sensor data was insufficient. Keep it still and retry.',
+      );
     }, REST_CALIBRATION_MS);
-  }, [tracker.calibrateImu]);
+  }, [tracker.calibrateImu, tracker.calibrationConfidence]);
+
+  const calibrateSquatCamera = useCallback(async () => {
+    if (!cameraRef.current) return;
+    setCalibration('CAPTURING');
+    setCalibrationDetail(null);
+    try {
+      const picture = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.1, skipProcessing: true });
+      if (!picture.base64) throw new Error('Camera pixels were unavailable.');
+      const frame = decodeCameraFrame(picture.base64);
+      const observation = tracker.calibratePlateFromFrame(
+        frame.rgba,
+        frame.width,
+        frame.height,
+        plateDiameterMm / 1000,
+      );
+      if (!observation || !tracker.calibrated) {
+        setCalibration('FAILED');
+        setCalibrationDetail('Target confidence was too low. Center the plate in the red guide, improve lighting, and retry.');
+        return;
+      }
+      setCalibration('READY');
+      setCalibrationDetail(
+        `Detected ${Math.round(observation.diameterPx)} px · confidence ${Math.round(observation.confidence * 100)}%.`,
+      );
+    } catch {
+      setCalibration('FAILED');
+      setCalibrationDetail('Camera calibration failed. Keep the plate fully visible in the red guide and retry.');
+    }
+  }, [plateDiameterMm, tracker.calibratePlateFromFrame, tracker.calibrated]);
 
   const begin = useCallback(async () => {
     if (!exerciseName.trim() || weightKg <= 0 || Number(targetReps) < 1) {
@@ -239,6 +300,8 @@ export default function MotionTrackerScreen() {
   }, [demoMode, exerciseName, isSquat, permission?.granted, plateDiameterMm, requestPermission, targetReps, tracker.calibrated, weightKg]);
 
   const startRecording = () => {
+    recordingSessionId.current += 1;
+    captureId.current = `capture-${Date.now().toString(36)}-${recordingSessionId.current}`;
     imuSamples.current = [];
     cvFrames.current = [];
     lastCvFrameAt.current = null;
@@ -251,8 +314,14 @@ export default function MotionTrackerScreen() {
 
   const submit = useCallback(async (nextSummary: SetSummary, manualRepBoundsUsed: boolean) => {
     const reps = nextSummary.reps;
-    if (reps.length === 0) {
+    if (nextSummary.measurementStatus !== 'MEASURED' || reps.length === 0) {
       setSummary({ ...nextSummary, measurementStatus: 'UNAVAILABLE', unavailableReason: 'No complete calibrated repetitions were detected.' });
+      setPhase('FEEDBACK');
+      return;
+    }
+    if (!process.env.EXPO_PUBLIC_DOMAIN?.trim()) {
+      setError('The analysis service is not configured. Set EXPO_PUBLIC_DOMAIN, then retry this completed set.');
+      setSummary(nextSummary);
       setPhase('FEEDBACK');
       return;
     }
@@ -275,6 +344,7 @@ export default function MotionTrackerScreen() {
         duration_s: (Date.now() - startedAt.current) / 1000,
         sample_count: cvFrames.current.length,
         manual_rep_bounds_used: manualRepBoundsUsed,
+        capture_id: captureId.current ?? undefined,
       } : {
         exercise_name: 'Lat Pulldown',
         weight_kg: weightKg,
@@ -284,6 +354,7 @@ export default function MotionTrackerScreen() {
         total_sets: 1,
         phone_placement: 'weight_stack' as const,
         samples: imuSamples.current,
+        capture_id: captureId.current ?? undefined,
       };
       const response = await analyzeSet(payload);
       setResult(response);
@@ -297,6 +368,7 @@ export default function MotionTrackerScreen() {
   const stopRecording = () => {
     if (finalized.current) return;
     finalized.current = true;
+    recordingSessionId.current += 1;
     if (!isSquat) {
       const completed = tracker.stopSet().completedSet ?? summary;
       const decorated = { ...completed, durationSec: (Date.now() - startedAt.current) / 1000, sampleCount: imuSamples.current.length, inferenceSource: 'IMU' as const, limitations: ['Phone is mounted to the Lat Pulldown weight stack; Z-axis IMU estimate.'] };
@@ -306,12 +378,13 @@ export default function MotionTrackerScreen() {
     const frames = trimRackingNoise(cvFrames.current, Date.now());
     cvFrames.current = frames;
     const cvSummary = tracker.stopSet().completedSet ?? summary;
+    const confidence = getCvTrackingConfidence(frames);
     if (needsManualCvReview(frames, cvSummary.reps)) {
-      setSummary({ ...cvSummary, measurementStatus: 'UNAVAILABLE', unavailableReason: 'CV tracking did not produce enough confident frame data. Review the timeline or retake with better lighting and a perpendicular camera.' });
+      setSummary({ ...cvSummary, confidence: confidence >= 0.85 ? 'MEDIUM' : 'LOW', dataQuality: confidence >= 0.85 ? 'GOOD' : 'DEGRADED', measurementStatus: 'UNAVAILABLE', unavailableReason: `CV confidence was ${Math.round(confidence * 100)}%. Review only if confidence is at least 85%; otherwise retake with better lighting and a perpendicular camera.` });
       setPhase('POST_REVIEW');
       return;
     }
-    void submit({ ...cvSummary, inferenceSource: 'MANUAL', sampleCount: frames.length, durationSec: (Date.now() - startedAt.current) / 1000 }, false);
+    void submit({ ...cvSummary, confidence: 'HIGH', dataQuality: 'GOOD', inferenceSource: 'MANUAL', sampleCount: frames.length, durationSec: (Date.now() - startedAt.current) / 1000 }, false);
   };
 
   const applyManualReview = () => {
@@ -322,19 +395,26 @@ export default function MotionTrackerScreen() {
       topSpeed: Math.max(0, ...reps.map((rep) => rep.peakVelocity ?? 0)),
       peakVelocities: reps.map((rep) => rep.peakVelocity ?? 0),
       consistencyScore: 0,
-      measurementStatus: reps.length ? 'MEASURED' : 'UNAVAILABLE',
-      unavailableReason: reps.length ? undefined : 'Manual ranges need tracked CV frames. Retake with the plate clearly visible in the camera guide.',
+      measurementStatus: reps.length && getCvTrackingConfidence(cvFrames.current) >= 0.85 ? 'MEASURED' : 'UNAVAILABLE',
+      unavailableReason: reps.length ? 'Manual rep bounds are below the 85% tracking-confidence gate. Metrics remain withheld from trusted history.' : 'Manual ranges need tracked CV frames. Retake with the plate clearly visible in the camera guide.',
+      dataQuality: getCvTrackingConfidence(cvFrames.current) >= 0.85 ? 'GOOD' : 'DEGRADED',
+      confidence: getCvTrackingConfidence(cvFrames.current) >= 0.85 ? 'MEDIUM' : 'LOW',
       inferenceSource: 'MANUAL',
       sampleCount: cvFrames.current.length,
       durationSec: (Date.now() - startedAt.current) / 1000,
     };
-    if (!reps.length) { setSummary(updated); setPhase('FEEDBACK'); return; }
+    if (updated.measurementStatus !== 'MEASURED') { setSummary(updated); setPhase('FEEDBACK'); return; }
     void submit(updated, true);
   };
 
   const reset = () => {
+    recordingSessionId.current += 1;
+    captureId.current = null;
+    if (calibrationTimer.current) clearTimeout(calibrationTimer.current);
+    calibrationSubscription.current?.remove();
+    calibrationSubscription.current = null;
     tracker.resetTracker();
-    setPhase('SETUP'); setCalibration('IDLE'); setResult(null); setError(null); setCameraReady(false); setTrackingLost(false); setManualBounds([]);
+    setPhase('SETUP'); setCalibration('IDLE'); setCalibrationDetail(null); setResult(null); setError(null); setCameraReady(false); setTrackingLost(false); setManualBounds([]);
     setSummary({ reps: [], meanRepTime: 0, topSpeed: 0, peakVelocities: [], consistencyScore: 0 });
   };
 
@@ -357,14 +437,16 @@ export default function MotionTrackerScreen() {
     <Text style={styles.eyebrow}>{isSquat ? 'SQUAT · CAMERA CALIBRATION' : 'LAT PULLDOWN · IMU CALIBRATION'}</Text><Text style={styles.title}>{isSquat ? 'Lock the plate view.' : 'Capture still rest.'}</Text>
     {isSquat ? <View style={styles.card}>
       <Text style={styles.cardTitle}>Profile-view camera only</Text><Text style={styles.body}>Another person films from exactly perpendicular to the lifter at hip/knee height. Keep the full plate or sleeve visible; do not attach the phone to the barbell.</Text>
-      <Text style={styles.caption}>Scale: {plateDiameterMm} mm. Lighting, occlusion, and perspective affect CV accuracy; this is not a laboratory-grade force plate.</Text>
+       <Text style={styles.caption}>Tripod/stand required. Scale uses the observed target diameter and your {plateDiameterMm} mm reference; lighting, occlusion, and perspective affect confidence.</Text>
       {!permission?.granted ? <Button label="ALLOW CAMERA" onPress={() => { void requestPermission(); }} /> : <View style={styles.cameraPreview}><CameraView ref={cameraRef} facing="back" style={StyleSheet.absoluteFillObject} onCameraReady={() => setCameraReady(true)} /><View pointerEvents="none" style={[styles.trackingBox, !cameraReady && styles.trackingBoxLost]} /><Text style={styles.cameraLabel}>{cameraReady ? 'ALIGN PLATE IN RED GUIDE' : 'STARTING CAMERA…'}</Text></View>}
-      <Button label="CONFIRM PLATE IN GUIDE" disabled={!cameraReady} onPress={() => { tracker.setCustomReference(plateDiameterMm / 1000, 300); setCalibration('READY'); }} />
-      {calibration === 'READY' ? <Text style={styles.success}>Camera guide confirmed. Begin only while the camera remains profile-on.</Text> : null}
+       <Button label={calibration === 'CAPTURING' ? 'DETECTING TARGET…' : 'DETECT PLATE IN GUIDE'} disabled={!cameraReady || calibration === 'CAPTURING'} onPress={() => { void calibrateSquatCamera(); }} />
+       {calibrationDetail ? <Text style={calibration === 'READY' ? styles.success : styles.warning}>{calibrationDetail}</Text> : null}
+       {calibration === 'READY' ? <Text style={styles.success}>Target locked. Begin only while the tripod remains stationary and the plate stays in the guide.</Text> : null}
       <Button label="START SQUAT RECORDING" disabled={calibration !== 'READY'} onPress={startRecording} />
     </View> : <View style={styles.card}>
       <Text style={styles.cardTitle}>Weight-stack IMU</Text><Text style={styles.body}>Secure the phone to the Lat Pulldown weight stack with its Z axis aligned to the stack movement. Hold it perfectly still for one second; video is not used in this mode.</Text>
-      <Text style={[styles.caption, calibration === 'FAILED' && styles.warning]}>{calibration === 'CAPTURING' ? 'Capturing 50 Hz rest baseline…' : calibration === 'READY' ? 'Rest baseline captured · Z-axis IMU enabled' : calibration === 'FAILED' ? 'Calibration was unstable. Keep the stack still and retry.' : 'Velocity remains unavailable until rest calibration succeeds.'}</Text>
+       <Text style={[styles.caption, calibration === 'FAILED' && styles.warning]}>{calibration === 'CAPTURING' ? 'Capturing 50 Hz rest baseline…' : calibration === 'READY' ? 'Rest baseline captured · Z-axis IMU enabled' : calibration === 'FAILED' ? 'Calibration was unstable. Keep the stack still and retry.' : 'Velocity remains unavailable until rest calibration succeeds.'}</Text>
+       {calibrationDetail ? <Text style={calibration === 'READY' ? styles.success : styles.warning}>{calibrationDetail}</Text> : null}
       <Button label={calibration === 'CAPTURING' ? 'CAPTURING REST…' : 'CAPTURE 1-SECOND REST'} disabled={calibration === 'CAPTURING'} onPress={calibrateImu} /><Button label="START LAT PULLDOWN SET" disabled={calibration !== 'READY'} onPress={startRecording} />
     </View>}
     <Button label="BACK TO SETUP" secondary onPress={() => setPhase('SETUP')} />
@@ -379,7 +461,7 @@ export default function MotionTrackerScreen() {
     {error ? <Text style={styles.warning}>{error}</Text> : null}<Button label={demoMode ? 'START REHEARSAL' : isSquat ? 'CALIBRATE SQUAT CAMERA' : 'CALIBRATE LAT PULLDOWN IMU'} onPress={() => { void begin(); }} />
   </ScrollView>;
 
-  return <View style={styles.root}>{isSquat ? <CameraView ref={cameraRef} facing="back" style={StyleSheet.absoluteFillObject} onCameraReady={() => setCameraReady(true)} /> : null}<View style={styles.shade} /><View style={[styles.record, { paddingTop: insets.top + 20 }]}><Text style={styles.eyebrow}>{isSquat ? trackingLost ? 'CV TRACKING LOST' : 'SQUAT CV · PROFILE VIEW' : 'LAT PULLDOWN IMU · Z AXIS'}</Text><Text style={styles.title}>{exerciseName} set in progress</Text>{isSquat ? <View style={[styles.trackingBox, trackingLost && styles.trackingBoxLost]} /> : null}<View style={styles.liveCard}><Metric label="REPS DETECTED" value={String(tracker.reps.length)} /><Metric label="VELOCITY" value={tracker.currentVelocity == null ? 'Awaiting data' : `${tracker.currentVelocity.toFixed(2)} m/s`} note={isSquat ? 'local CV estimate · 5 Hz snapshots' : 'Z-axis IMU estimate'} /><Text style={styles.body}>{isSquat ? trackingLost ? 'Tracking paused. Lost frames are excluded; restore the plate to the guide before continuing.' : 'Keep the plate inside the red guide. Tap Stop before racking the bar.' : 'Phone stays secured on the stack. Direction changes determine repetitions; no video is recorded.'}</Text></View><View style={styles.recordActions}>{isSquat ? <Button label={trackingLost ? 'RESUME TRACKING' : 'MARK TRACKING LOST'} secondary onPress={() => setTrackingLost((lost) => !lost)} /> : null}<Button label="STOP & REVIEW" onPress={stopRecording} /></View><Text style={styles.caption}>{isSquat ? 'Manual Stop trims final racking noise. Low-confidence captures open post-set review.' : 'At least 20 timestamped samples are required. Do not move the phone off the stack.'}</Text></View></View>;
+  return <View style={styles.root}>{isSquat ? <CameraView ref={cameraRef} facing="back" style={StyleSheet.absoluteFillObject} onCameraReady={() => setCameraReady(true)} /> : null}<View style={styles.shade} /><View style={[styles.record, { paddingTop: insets.top + 20 }]}><Text style={styles.eyebrow}>{isSquat ? trackingLost ? 'CV TRACKING LOST' : 'SQUAT CV · PROFILE VIEW' : 'LAT PULLDOWN IMU · Z AXIS'}</Text><Text style={styles.title}>{exerciseName} set in progress</Text>{isSquat ? <View style={[styles.trackingBox, trackingLost && styles.trackingBoxLost]} /> : null}<View style={styles.liveCard}><Metric label="REPS DETECTED" value={String(tracker.reps.length)} /><Metric label="VELOCITY" value={tracker.currentVelocity == null ? 'Awaiting data' : `${tracker.currentVelocity.toFixed(2)} m/s`} note={isSquat ? 'local CV estimate · 5 Hz snapshots' : 'Z-axis IMU estimate'} />{isSquat ? <Metric label="TRACKING CONFIDENCE" value={`${Math.round(tracker.trackingConfidence * 100)}%`} note="85% required for trusted history" /> : <Metric label="REST CONFIDENCE" value={`${Math.round(tracker.calibrationConfidence * 100)}%`} note="stationary Z-axis baseline" />}<Text style={styles.body}>{isSquat ? trackingLost ? 'Tracking paused. Lost frames are excluded; restore the plate to the guide before continuing.' : 'Keep the plate inside the red guide. Tap Stop before racking the bar.' : 'Phone stays secured on the stack. Direction changes determine repetitions; no video is recorded.'}</Text></View><View style={styles.recordActions}>{isSquat ? <Button label={trackingLost ? 'RESUME TRACKING' : 'MARK TRACKING LOST'} secondary onPress={() => setTrackingLost((lost) => !lost)} /> : null}<Button label="STOP & REVIEW" onPress={stopRecording} /></View><Text style={styles.caption}>{isSquat ? 'Manual Stop trims final racking noise. Low-confidence captures open post-set review.' : 'At least 20 timestamped samples are required. Do not move the phone off the stack.'}</Text></View></View>;
 }
 
 const styles = StyleSheet.create({

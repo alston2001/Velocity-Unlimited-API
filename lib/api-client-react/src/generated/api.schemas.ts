@@ -127,6 +127,12 @@ export interface SetAnalysisRequest {
      * @minLength 1
      */
   exercise_name: string;
+  /**
+     * Stable client-generated ID for safe retry and exactly-once set persistence
+     * @minLength 8
+     * @maxLength 128
+     */
+  capture_id?: string;
   /** Load on the bar in kilograms */
   weight_kg: number;
   /** Optional legacy/test provenance override. Production source is inferred from the exercise profile. */
@@ -218,6 +224,25 @@ export const SetAnalysisResultReadinessDataSource = {
   no_trusted_persisted_history: 'no_trusted_persisted_history',
 } as const;
 
+/**
+ * Data-selected coaching status available before optional AI enrichment
+ */
+export type SetAnalysisResultDeterministicStatus = typeof SetAnalysisResultDeterministicStatus[keyof typeof SetAnalysisResultDeterministicStatus];
+
+
+export const SetAnalysisResultDeterministicStatus = {
+  BASELINE_BUILDING: 'BASELINE_BUILDING',
+  PRIMED: 'PRIMED',
+  READY: 'READY',
+  STABLE: 'STABLE',
+  LOW_READINESS: 'LOW_READINESS',
+  COMPROMISED: 'COMPROMISED',
+  MANAGE_FATIGUE: 'MANAGE_FATIGUE',
+  HIGH_FATIGUE: 'HIGH_FATIGUE',
+  VELOCITY_DROP: 'VELOCITY_DROP',
+  REPEAT_LOAD: 'REPEAT_LOAD',
+} as const;
+
 export type ReadinessEvidenceMeasurementSource = typeof ReadinessEvidenceMeasurementSource[keyof typeof ReadinessEvidenceMeasurementSource];
 
 
@@ -298,6 +323,8 @@ export interface SetAnalysisResult {
   diary_context_available: boolean;
   /** Non-clinical sentiment context only; does not contain the raw diary note */
   diary_context: string | null;
+  /** Data-selected coaching status available before optional AI enrichment */
+  deterministic_status: SetAnalysisResultDeterministicStatus;
 }
 
 /**

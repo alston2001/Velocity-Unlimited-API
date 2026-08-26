@@ -2,6 +2,12 @@ export type TrackerMode = 'FREE_WEIGHT_SIDE' | 'PULLEY_FRONT';
 export type TrackerPhase = 'IDLE' | 'ACTIVE' | 'COOLDOWN';
 
 export type Point = { x: number; y: number };
+export type NormalizedRoi = { x: number; y: number; width: number; height: number };
+export type SideProfileObservation = {
+  centroid: Point;
+  diameterPx: number;
+  confidence: number;
+};
 
 export type RepMetric = {
   repNumber: number;
@@ -37,6 +43,8 @@ export type TrackerSnapshot = {
   centroid: Point | null;
   trajectory: Point[];
   completedSet: SetSummary | null;
+  trackingConfidence: number;
+  calibrationConfidence: number;
 };
 
 export interface ExerciseTrackerEngine {
@@ -47,12 +55,20 @@ export interface ExerciseTrackerEngine {
   readonly centroid: Point | null;
   readonly trajectory: Point[];
   readonly completedSet: SetSummary | null;
+  readonly trackingConfidence: number;
+  readonly calibrationConfidence: number;
   processFrame(
     rgba: Uint8ClampedArray | null,
     width: number,
     height: number,
     dt: number,
   ): TrackerSnapshot;
+  calibratePlateFromFrame(
+    rgba: Uint8ClampedArray,
+    width: number,
+    height: number,
+    referenceMeters: number,
+  ): SideProfileObservation | null;
   updateImu(accelMs2: number, timestampMs: number): TrackerSnapshot;
   calibrateImu(restSamplesMs2: number[]): boolean;
   readonly calibrated: boolean;
@@ -69,6 +85,13 @@ const IDLE_NOISE_FLOOR = 0.035;
 const MOTION_SPIKE_THRESHOLD = 0.09;
 const STILLNESS_SECONDS = 2.5;
 const MIN_REP_VELOCITY = 0.015;
+export const SQUAT_TRACKING_ROI: NormalizedRoi = {
+  x: 0.18,
+  y: 0.18,
+  width: 0.64,
+  height: 0.64,
+};
+const MIN_CALIBRATION_CONFIDENCE = 0.4;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -133,95 +156,114 @@ export function otsuThreshold(values: Float32Array) {
 }
 
 /**
- * Mode A pipeline: HSV glare masking → Otsu foreground threshold → Canny-like
- * gradient edges → largest connected moving component centroid.
+ * Classical Squat CV constrained to the visible red guide/ROI. The largest
+ * candidate is selected only inside that guide, so unrelated gym motion cannot
+ * become the tracked target.
  */
-export function findSideProfileCentroid(
+export function findSideProfileObservation(
   current: Uint8ClampedArray,
   previous: Uint8ClampedArray | null,
   width: number,
   height: number,
-): Point | null {
-  if (width < 8 || height < 8 || current.length < width * height * 4) {
-    return null;
-  }
+  roi: NormalizedRoi = { x: 0, y: 0, width: 1, height: 1 },
+): SideProfileObservation | null {
+  if (width < 8 || height < 8 || current.length < width * height * 4) return null;
+  const left = clamp(Math.floor(width * roi.x), 1, width - 2);
+  const top = clamp(Math.floor(height * roi.y), 1, height - 2);
+  const right = clamp(Math.ceil(width * (roi.x + roi.width)), left + 1, width - 1);
+  const bottom = clamp(Math.ceil(height * (roi.y + roi.height)), top + 1, height - 1);
   const grayscale = new Float32Array(width * height);
   const motion = new Uint8Array(width * height);
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
+  for (let y = top; y < bottom; y++) {
+    for (let x = left; x < right; x++) {
       const index = y * width + x;
       const hsv = hsvAt(current, width, x, y);
       const value = grayAt(current, width, x, y);
       grayscale[index] = value;
-      const glare = hsv.v * 255 > 240;
-      const diff =
-        previous && previous.length >= width * height * 4
-          ? Math.abs(value - grayAt(previous, width, x, y))
-          : 255;
-      motion[index] = glare || diff < 8 ? 0 : 1;
+      const hasPrevious = previous !== null && previous.length >= width * height * 4;
+      const diff = hasPrevious
+        ? Math.abs(value - grayAt(previous, width, x, y))
+        : 255;
+      motion[index] = hsv.v * 255 > 240 || diff < 8 ? 0 : 1;
     }
   }
 
   const threshold = otsuThreshold(grayscale);
   const edge = new Uint8Array(width * height);
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
+  for (let y = top; y < bottom; y++) {
+    for (let x = left; x < right; x++) {
       const index = y * width + x;
       const gx = grayscale[index + 1]! - grayscale[index - 1]!;
       const gy = grayscale[index + width]! - grayscale[index - width]!;
-      const magnitude = Math.sqrt(gx * gx + gy * gy);
-      edge[index] =
-        motion[index] && (grayscale[index]! > threshold || magnitude > 22)
-          ? 1
-          : 0;
+      edge[index] = motion[index] && (grayscale[index]! > threshold || Math.hypot(gx, gy) > 22) ? 1 : 0;
     }
   }
 
   const visited = new Uint8Array(width * height);
   let largest: Point[] = [];
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
+  let bounds = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+  for (let y = top; y < bottom; y++) {
+    for (let x = left; x < right; x++) {
       const start = y * width + x;
       if (!edge[start] || visited[start]) continue;
       const queue = [start];
       const component: Point[] = [];
+      let candidate = { minX: x, minY: y, maxX: x, maxY: y };
       visited[start] = 1;
       while (queue.length) {
         const index = queue.pop()!;
         const pointX = index % width;
         const pointY = Math.floor(index / width);
         component.push({ x: pointX, y: pointY });
-        for (const [dx, dy] of [
-          [1, 0],
-          [-1, 0],
-          [0, 1],
-          [0, -1],
-        ]) {
+        candidate = {
+          minX: Math.min(candidate.minX, pointX),
+          minY: Math.min(candidate.minY, pointY),
+          maxX: Math.max(candidate.maxX, pointX),
+          maxY: Math.max(candidate.maxY, pointY),
+        };
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
           const nextX = pointX + dx;
           const nextY = pointY + dy;
           const next = nextY * width + nextX;
           if (
-            nextX > 0 &&
-            nextX < width - 1 &&
-            nextY > 0 &&
-            nextY < height - 1 &&
-            edge[next] &&
-            !visited[next]
+            nextX >= left && nextX < right && nextY >= top && nextY < bottom &&
+            edge[next] && !visited[next]
           ) {
             visited[next] = 1;
             queue.push(next);
           }
         }
       }
-      if (component.length > largest.length) largest = component;
+      if (component.length > largest.length) {
+        largest = component;
+        bounds = candidate;
+      }
     }
   }
-  return largest.length < 4
-    ? null
-    : {
-        x: largest.reduce((sum, point) => sum + point.x, 0) / largest.length,
-        y: largest.reduce((sum, point) => sum + point.y, 0) / largest.length,
-      };
+  if (largest.length < 4) return null;
+  const centroid = {
+    x: largest.reduce((sum, point) => sum + point.x, 0) / largest.length,
+    y: largest.reduce((sum, point) => sum + point.y, 0) / largest.length,
+  };
+  const diameterPx = Math.max(bounds.maxX - bounds.minX + 1, bounds.maxY - bounds.minY + 1);
+  const roiRadius = Math.max(1, Math.hypot(right - left, bottom - top) / 2);
+  const centerDistance = Math.hypot(centroid.x - (left + right) / 2, centroid.y - (top + bottom) / 2);
+  const confidence = clamp(
+    Math.min(1, largest.length / 80) * 0.7 + clamp(1 - centerDistance / roiRadius, 0, 1) * 0.3,
+    0,
+    1,
+  );
+  return { centroid, diameterPx, confidence };
+}
+
+export function findSideProfileCentroid(
+  current: Uint8ClampedArray,
+  previous: Uint8ClampedArray | null,
+  width: number,
+  height: number,
+  roi?: NormalizedRoi,
+): Point | null {
+  return findSideProfileObservation(current, previous, width, height, roi)?.centroid ?? null;
 }
 
 /**
@@ -334,6 +376,8 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
   private lastRepAt = 0;
   private idleFrameCounter = 0;
   private calibratedValue = false;
+  private trackingConfidenceValue = 0;
+  private calibrationConfidenceValue = 0;
   private gravityBaselineMs2 = 0;
   private lastImuTimestampMs: number | null = null;
   private filteredAccelMs2 = 0;
@@ -353,6 +397,8 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
   get centroid() { return this.centroidValue; }
   get trajectory() { return this.trajectoryValue; }
   get completedSet() { return this.completedSetValue; }
+  get trackingConfidence() { return this.trackingConfidenceValue; }
+  get calibrationConfidence() { return this.calibrationConfidenceValue; }
 
   processFrame(
     rgba: Uint8ClampedArray | null,
@@ -367,8 +413,16 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
       this.kalman.predict(0, dt);
       if (this.mode === 'FREE_WEIGHT_SIDE') {
         const lastCentroid = this.centroidValue;
-        const centroid = findSideProfileCentroid(rgba, previous, width, height);
-        if (centroid) {
+        const observation = findSideProfileObservation(
+          rgba,
+          previous,
+          width,
+          height,
+          SQUAT_TRACKING_ROI,
+        );
+        this.trackingConfidenceValue = observation?.confidence ?? 0;
+        if (observation) {
+          const centroid = observation.centroid;
           motion = lastCentroid ? Math.abs(centroid.y - lastCentroid.y) : 0;
           this.centroidValue = centroid;
           this.trajectoryValue = [...this.trajectoryValue, centroid].slice(-60);
@@ -377,17 +431,22 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
               this.displacementValue - (centroid.y - lastCentroid.y) * this.metersPerPixel,
             );
           }
+        } else {
+          this.centroidValue = null;
         }
       } else {
         const deltaPixels = estimatePulleyDisplacement(rgba, previous, width, height);
         motion = Math.abs(deltaPixels);
         this.displacementValue += deltaPixels * this.metersPerPixel;
         this.kalman.measurePosition(this.displacementValue);
+        this.trackingConfidenceValue = this.calibratedValue ? 1 : 0;
       }
       this.previousFrame = rgba.slice();
       const estimate = this.kalman.values();
       this.displacementValue = estimate.position;
       this.velocityValue = estimate.velocity;
+    } else if (this.mode === 'FREE_WEIGHT_SIDE') {
+      this.trackingConfidenceValue = 0;
     }
     if (this.phaseValue === 'IDLE') {
       this.idleFrameCounter++;
@@ -408,6 +467,7 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
     if (!Number.isFinite(mean) || varianceValue > 0.35 ** 2) return false;
     this.gravityBaselineMs2 = mean;
     this.calibratedValue = true;
+    this.calibrationConfidenceValue = clamp(1 - Math.sqrt(varianceValue) / 0.35, 0, 1);
     this.lastImuTimestampMs = null;
     this.filteredAccelMs2 = 0;
     this.velocityValue = 0;
@@ -573,7 +633,26 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
   calibratePlate(observedPx: number) {
     if (this.mode !== 'FREE_WEIGHT_SIDE' || observedPx <= 2) return false;
     this.metersPerPixel = PLATE_DIAMETER_M / observedPx;
+    this.calibratedValue = true;
+    this.calibrationConfidenceValue = 1;
     return true;
+  }
+
+  calibratePlateFromFrame(
+    rgba: Uint8ClampedArray,
+    width: number,
+    height: number,
+    referenceMeters: number,
+  ) {
+    if (this.mode !== 'FREE_WEIGHT_SIDE' || !Number.isFinite(referenceMeters) || referenceMeters <= 0) return null;
+    const observation = findSideProfileObservation(rgba, null, width, height, SQUAT_TRACKING_ROI);
+    if (!observation || observation.diameterPx <= 2 || observation.confidence < MIN_CALIBRATION_CONFIDENCE) {
+      return observation;
+    }
+    this.metersPerPixel = referenceMeters / observation.diameterPx;
+    this.calibratedValue = true;
+    this.calibrationConfidenceValue = observation.confidence;
+    return observation;
   }
 
   setCustomReference(referenceMeters: number, observedPx: number) {
@@ -593,6 +672,12 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
     this.centroidValue = null;
     this.trajectoryValue = [];
     this.completedSetValue = null;
+    this.calibratedValue = false;
+    this.trackingConfidenceValue = 0;
+    this.calibrationConfidenceValue = 0;
+    this.metersPerPixel = this.mode === 'FREE_WEIGHT_SIDE'
+      ? PLATE_DIAMETER_M / DEFAULT_PLATE_PX
+      : 1;
     this.previousVelocity = 0;
     this.previousDisplacement = 0;
     this.stillnessSeconds = 0;
@@ -617,6 +702,8 @@ export class ExerciseTracker implements ExerciseTrackerEngine {
       centroid: this.centroidValue,
       trajectory: [...this.trajectoryValue],
       completedSet: this.completedSetValue,
+      trackingConfidence: this.trackingConfidenceValue,
+      calibrationConfidence: this.calibrationConfidenceValue,
     };
   }
 }

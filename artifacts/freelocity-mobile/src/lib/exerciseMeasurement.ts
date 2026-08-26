@@ -6,6 +6,7 @@ export type CvFramePoint = {
   timestamp: number;
   displacementM: number;
   tracked: boolean;
+  confidence?: number;
 };
 
 export type CvRepBounds = {
@@ -24,7 +25,10 @@ export function measurementModeForExercise(exerciseName: string): ExerciseMeasur
 
 export function getCvTrackingConfidence(points: CvFramePoint[]): number {
   if (points.length === 0) return 0;
-  return points.filter((point) => point.tracked).length / points.length;
+  return points.reduce(
+    (sum, point) => sum + (point.tracked ? point.confidence ?? 1 : 0),
+    0,
+  ) / points.length;
 }
 
 export function needsManualCvReview(points: CvFramePoint[], reps: RepMetric[]): boolean {

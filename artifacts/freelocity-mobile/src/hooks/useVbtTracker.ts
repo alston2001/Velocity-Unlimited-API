@@ -14,22 +14,56 @@ export function useVbtTracker(mode: TrackerMode) {
     engineRef.current = new ExerciseTracker(mode);
   }
   const [snapshot, setSnapshot] = useState(engineRef.current.snapshot());
+  const snapshotRef = useRef(snapshot);
+  const lastPublishedAt = useRef(0);
+  const publishTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingSnapshot = useRef<typeof snapshot | null>(null);
+
+  const publishSnapshot = useCallback((next: typeof snapshot, immediate = false) => {
+    snapshotRef.current = next;
+    const now = Date.now();
+    if (immediate || now - lastPublishedAt.current >= 100) {
+      if (publishTimer.current) {
+        clearTimeout(publishTimer.current);
+        publishTimer.current = null;
+      }
+      pendingSnapshot.current = null;
+      lastPublishedAt.current = now;
+      setSnapshot(next);
+      return;
+    }
+    pendingSnapshot.current = next;
+    if (!publishTimer.current) {
+      publishTimer.current = setTimeout(() => {
+        publishTimer.current = null;
+        const pending = pendingSnapshot.current;
+        if (!pending) return;
+        pendingSnapshot.current = null;
+        lastPublishedAt.current = Date.now();
+        setSnapshot(pending);
+      }, 100 - (now - lastPublishedAt.current));
+    }
+  }, []);
 
   useEffect(() => {
-    setSnapshot(engineRef.current!.reset());
-  }, [mode]);
+    publishSnapshot(engineRef.current!.reset(), true);
+  }, [mode, publishSnapshot]);
+
+  useEffect(() => () => {
+    if (publishTimer.current) clearTimeout(publishTimer.current);
+  }, []);
 
   const updateImu = useCallback((accelMs2: number, timestampMs: number) => {
     const next = engineRef.current!.updateImu(accelMs2, timestampMs);
-    setSnapshot(next);
+    publishSnapshot(next);
     return next;
-  }, []);
+  }, [publishSnapshot]);
 
   const calibrateImu = useCallback((restSamplesMs2: number[]) => {
     const calibrated = engineRef.current!.calibrateImu(restSamplesMs2);
-    setSnapshot(engineRef.current!.snapshot());
+    publishSnapshot(engineRef.current!.snapshot(), true);
     return calibrated;
-  }, []);
+  }, [publishSnapshot]);
 
   const processFrame = useCallback(
     (
@@ -39,33 +73,49 @@ export function useVbtTracker(mode: TrackerMode) {
       dt: number,
     ) => {
       const next = engineRef.current!.processFrame(rgba, width, height, dt);
-      setSnapshot(next);
+      publishSnapshot(next);
       return next;
     },
-    [],
+    [publishSnapshot],
   );
 
   const manualIncrementRep = useCallback(() => {
     const next = engineRef.current!.manualIncrementRep();
-    setSnapshot(next);
+    publishSnapshot(next, true);
     return next;
-  }, []);
+  }, [publishSnapshot]);
 
   const resetTracker = useCallback(() => {
     const next = engineRef.current!.reset();
-    setSnapshot(next);
+    publishSnapshot(next, true);
     return next;
-  }, []);
+  }, [publishSnapshot]);
 
   const stopSet = useCallback(() => {
     const next = engineRef.current!.stopSet();
-    setSnapshot(next);
+    publishSnapshot(next, true);
     return next;
-  }, []);
+  }, [publishSnapshot]);
 
   const calibratePlate = useCallback((observedPx: number) => {
-    return engineRef.current!.calibratePlate(observedPx);
-  }, []);
+    const calibrated = engineRef.current!.calibratePlate(observedPx);
+    publishSnapshot(engineRef.current!.snapshot(), true);
+    return calibrated;
+  }, [publishSnapshot]);
+
+  const calibratePlateFromFrame = useCallback(
+    (rgba: Uint8ClampedArray, width: number, height: number, referenceMeters: number) => {
+      const observation = engineRef.current!.calibratePlateFromFrame(
+        rgba,
+        width,
+        height,
+        referenceMeters,
+      );
+      publishSnapshot(engineRef.current!.snapshot(), true);
+      return observation;
+    },
+    [publishSnapshot],
+  );
 
   const setCustomReference = useCallback(
     (referenceMeters: number, observedPx: number) => {
@@ -82,6 +132,8 @@ export function useVbtTracker(mode: TrackerMode) {
     phase: snapshot.phase as TrackerPhase,
     centroid: snapshot.centroid as Point | null,
     trajectory: snapshot.trajectory as Point[],
+    trackingConfidence: snapshot.trackingConfidence,
+    calibrationConfidence: snapshot.calibrationConfidence,
     completedSet: snapshot.completedSet as SetSummary | null,
     updateImu,
     calibrateImu,
@@ -90,6 +142,7 @@ export function useVbtTracker(mode: TrackerMode) {
     resetTracker,
     stopSet,
     calibratePlate,
+    calibratePlateFromFrame,
     setCustomReference,
   };
 }

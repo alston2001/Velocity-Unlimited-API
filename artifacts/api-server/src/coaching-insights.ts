@@ -17,6 +17,34 @@ export interface DeterministicCoachingInput {
   diaryContext: string | null;
 }
 
+const DETERMINISTIC_STATUSES = [
+  "BASELINE_BUILDING",
+  "PRIMED",
+  "READY",
+  "STABLE",
+  "LOW_READINESS",
+  "COMPROMISED",
+  "MANAGE_FATIGUE",
+  "HIGH_FATIGUE",
+  "VELOCITY_DROP",
+  "REPEAT_LOAD",
+] as const;
+
+export type DeterministicStatus = typeof DETERMINISTIC_STATUSES[number];
+
+export function selectDeterministicStatus(ctx: DeterministicCoachingInput): DeterministicStatus {
+  if (ctx.historicalComparison.dataPoints === 0) return "BASELINE_BUILDING";
+  if (ctx.cnsReadinessScore !== null && ctx.cnsReadinessScore < 55) return "COMPROMISED";
+  if (ctx.cnsReadinessScore !== null && ctx.cnsReadinessScore < 70) return "LOW_READINESS";
+  if (ctx.velocityLossPct !== null && ctx.velocityLossPct >= 25) return "HIGH_FATIGUE";
+  if (ctx.velocityLossPct !== null && ctx.velocityLossPct >= 15) return "MANAGE_FATIGUE";
+  if ((ctx.historicalComparison.deltaPct ?? 0) <= -8) return "VELOCITY_DROP";
+  if (ctx.cnsReadinessScore !== null && ctx.cnsReadinessScore >= 90) return "PRIMED";
+  if (ctx.cnsReadinessScore !== null && ctx.cnsReadinessScore >= 80) return "READY";
+  if (Math.abs(ctx.historicalComparison.deltaPct ?? 0) <= 3) return "STABLE";
+  return "REPEAT_LOAD";
+}
+
 export function buildHistoricalComparison(
   exerciseName: string,
   weightKg: number,
@@ -69,6 +97,7 @@ export function buildHistoricalComparison(
 }
 
 export function buildDeterministicCoaching(ctx: DeterministicCoachingInput): string {
+  const status = selectDeterministicStatus(ctx).replaceAll("_", " ").toLowerCase();
   const loss =
     ctx.velocityLossPct === null
       ? "Velocity loss is not available because fewer than two clear reps were measured."
@@ -80,5 +109,5 @@ export function buildDeterministicCoaching(ctx: DeterministicCoachingInput): str
   const diary = ctx.diaryContext
     ? `Diary context: ${ctx.diaryContext} This may help explain the day, but it does not establish cause or change the measured result.`
     : "";
-  return `${ctx.historicalComparison.insight} ${loss} ${readiness} ${diary}`.trim();
+  return `Status: ${status}. ${ctx.historicalComparison.insight} ${loss} ${readiness} ${diary}`.trim();
 }

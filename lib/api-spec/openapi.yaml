@@ -288,6 +288,11 @@ components:
           type: string
           minLength: 1
           description: Name of the exercise (e.g. "Bench Press")
+        capture_id:
+          type: string
+          minLength: 8
+          maxLength: 128
+          description: Stable client-generated ID for safe retry and exactly-once set persistence
         weight_kg:
           type: number
           description: Load on the bar in kilograms
@@ -489,6 +494,10 @@ components:
           type: string
           nullable: true
           description: Non-clinical sentiment context only; does not contain the raw diary note
+        deterministic_status:
+          type: string
+          enum: [BASELINE_BUILDING, PRIMED, READY, STABLE, LOW_READINESS, COMPROMISED, MANAGE_FATIGUE, HIGH_FATIGUE, VELOCITY_DROP, REPEAT_LOAD]
+          description: Data-selected coaching status available before optional AI enrichment
       required:
         - status
         - exercise_name
@@ -522,6 +531,7 @@ components:
         - readiness_evidence
         - diary_context_available
         - diary_context
+        - deterministic_status
     DemoHistoricalSet:
       type: object
       description: Immutable demo history row. Loads are always canonical kilograms.
