@@ -153,7 +153,7 @@ export default function DiaryScreen() {
                   <View key={point.entry_date} style={styles.trendRow}>
                     <Text style={styles.trendDate}>{point.entry_date.slice(5)}</Text>
                     <Text style={styles.trendMood}>{point.sentiment}</Text>
-                    <Text style={styles.trendVelocity}>{point.mean_velocity_ms == null ? 'No measured set' : `${point.mean_velocity_ms.toFixed(3)} m/s`}</Text>
+                    <Text style={styles.trendVelocity}>{point.mean_velocity_ms == null ? 'No measured set' : 'Measured set recorded'}</Text>
                   </View>
                 ))}
               </>
